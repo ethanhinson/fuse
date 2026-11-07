@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -44,6 +46,15 @@ var containerClientPassthrough = [...]string{
 	"CONTAINERD_ADDRESS", // nerdctl containerd socket
 	"XDG_RUNTIME_DIR",    // rootless socket discovery for podman/nerdctl
 }
+
+// containerManagedLabel marks every container fuse starts, so an operator can list
+// them (`docker ps --filter label=fuse.managed`) and tell them from their own.
+const containerManagedLabel = "fuse.managed=true"
+
+// containerKillTimeout bounds the `kill` sent after a timeout or cancel. A daemon
+// that has stopped answering must not hold the tool call, or a signalled run's
+// exit, for longer than this.
+const containerKillTimeout = 5 * time.Second
 
 // ErrNoContainerRuntime reports that none of the supported container CLIs is on
 // PATH, so the container substrate cannot be constructed.
@@ -440,7 +451,7 @@ func (h *containerHandler) workspace(root string, workingDir string) (mount stri
 // It returns an error rather than a best-effort command line: a working_dir
 // that cannot be contained is a REFUSAL, and a refusal must be unable to
 // produce argv at all, so there is nothing for Exec to accidentally run.
-func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) {
+func (r *containerRunner) argv(name string, cmd string, workingDir string) ([]string, error) {
 	// The Runner's own root, fixed at Acquire, is the ONLY root argv ever mounts.
 	mount, workdir, err := r.handler.workspace(r.root, workingDir)
 	if err != nil {
@@ -459,6 +470,11 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		// -i: keeps stdin open. No -t: there is no terminal here, and
 		// allocating one would corrupt the combined-output capture.
 		"-i",
+		// --name: the handle Exec kills by. Killing the `run` client on a timeout
+		// does not stop the container; the daemon owns it and it keeps writing to
+		// the mount, and without a name there is nothing to ask the daemon to stop.
+		"--name", name,
+		"--label", containerManagedLabel,
 	)
 
 	// Per-container cgroup caps (change 0077). Emitted ONLY for fields the
@@ -641,7 +657,11 @@ func (h *containerHandler) runPull(done chan struct{}, timeout time.Duration) {
 // all, and ExitCode is -1 on that path so a caller that reads only ExitCode
 // still fails closed. ExitCode is never left 0 on any failure path.
 func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir string) (Output, error) {
-	args, err := r.argv(cmd, workingDir)
+	name, err := newContainerName()
+	if err != nil {
+		return Output{ExitCode: -1}, err
+	}
+	args, err := r.argv(name, cmd, workingDir)
 	if err != nil {
 		// A containment refusal, decided BEFORE the CLI is touched: no
 		// container is created, no mount is established, nothing runs. It is
@@ -652,6 +672,13 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 	}
 
 	combined, code, err := r.handler.run(ctx, r.handler.runtime, args...)
+
+	// The context killed the client, not the container. This runs before Exec
+	// returns, so bash's teardown drain (see CloseSandbox) keeps a signalled process
+	// alive until it has happened.
+	if ctx.Err() != nil {
+		combined = append(combined, r.handler.killContainer(ctx, name)...)
+	}
 
 	out := Output{
 		Combined: combined,
@@ -686,6 +713,48 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 		out.ExitCode = -1
 	}
 	return out, nil
+}
+
+// newContainerName returns a name no other run on the daemon is using. The daemon
+// is shared across every fuse process and every checkout, so nothing derived from
+// this process would do, and the failure mode of a collision is killing someone
+// else's command.
+func newContainerName() (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("container name: %w", err)
+	}
+	return "fuse-" + hex.EncodeToString(b), nil
+}
+
+// killContainer stops a container whose client was killed. It returns a note for
+// the model when the container may still be running: the command is reported as
+// timed out or cancelled, and the model must not take that to mean it has stopped
+// writing to the repo.
+//
+// A container that has already gone is the expected race with --rm, not a failure.
+//
+// A client killed in the instant before the daemon registers the name can still
+// lose this race the other way. That container is reported here as already gone.
+func (h *containerHandler) killContainer(ctx context.Context, name string) []byte {
+	// The caller's context is what just fired.
+	killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerKillTimeout)
+	defer cancel()
+	out, code, err := h.run(killCtx, h.runtime, "kill", name)
+	if err == nil && code == 0 {
+		return nil
+	}
+	lower := strings.ToLower(string(out))
+	for _, gone := range [...]string{"no such", "not running", "no container"} {
+		if err == nil && strings.Contains(lower, gone) {
+			return nil
+		}
+	}
+	reason := strings.TrimSpace(string(out))
+	if err != nil {
+		reason = err.Error()
+	}
+	return fmt.Appendf(nil, "\n[sandbox: could not confirm container %s stopped; it may still be running and writing to the workspace: %s]\n", name, reason)
 }
 
 // Release is a no-op: each Exec's container is `--rm`, so there is nothing held
@@ -728,8 +797,15 @@ func runCommand(ctx context.Context, name string, lookup func(string) (string, b
 		c.Env = renderEnv(ResolveEnvFromOS(containerClientPassthrough[:]))
 	}
 
-	combined, err := c.CombinedOutput()
-	if err == nil {
+	// Bounded like the host path: a noisy container is just as able to exhaust this
+	// process through the client's output.
+	captured := newBoundedOutput()
+	c.Stdout, c.Stderr = captured, captured
+	// A killed client must not keep this call waiting on an inherited pipe.
+	c.WaitDelay = pipeWaitDelay
+	err := c.Run()
+	combined := captured.Bytes()
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return combined, 0, nil
 	}
 

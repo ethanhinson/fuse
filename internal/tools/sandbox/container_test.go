@@ -693,8 +693,8 @@ func TestContainerExecArgvGolden(t *testing.T) {
 		"example.invalid/img:1.2.3",
 		"/bin/sh", "-c", "echo hi",
 	}
-	if !reflect.DeepEqual(rec.args, want) {
-		t.Fatalf("argv mismatch\n got: %#v\nwant: %#v", rec.args, want)
+	if got := stripContainerIdentity(t, rec.args); !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 }
 
@@ -758,8 +758,8 @@ func TestContainerArgvEnforceOrderingIsUnchangedAroundTheFloor(t *testing.T) {
 		"--pull=never",
 		DefaultContainerImage, "/bin/sh", "-c", "true",
 	}
-	if !reflect.DeepEqual(argv, want) {
-		t.Fatalf("argv =\n%#v\nwant\n%#v", argv, want)
+	if got := stripContainerIdentity(t, argv); !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv =\n%#v\nwant\n%#v", got, want)
 	}
 }
 

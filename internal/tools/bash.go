@@ -67,7 +67,13 @@ type bashTool struct {
 
 	mu   sync.Mutex
 	pool bashSubstrate
+	// running holds a done channel per in-flight Execute, for CloseSandbox to wait on.
+	running map[chan struct{}]struct{}
 }
+
+// sandboxDrainTimeout bounds how long CloseSandbox waits for cancelled commands to
+// finish dying. It exceeds a process's pipe delay and a container's kill timeout.
+const sandboxDrainTimeout = 10 * time.Second
 
 // NewBash returns the bash tool bound to the process's sandbox Service.
 //
@@ -152,11 +158,32 @@ func (b *bashTool) substrate() (bashSubstrate, error) {
 // CloseSandbox releases the tool's warm pool: every Runner it holds and the
 // reaper goroutine. It is idempotent and safe to call from a teardown that runs
 // on both an error path and the completion goroutine. See ReleaseSandboxes.
+//
+// It waits first for commands still running. When a run is cancelled the agent loop
+// abandons the tool call and comes straight here, and the process exits right after.
+// The command's kill, including a `docker kill` that has yet to be sent, happens on
+// that abandoned goroutine, so without this wait it is a race the exit can win.
 func (b *bashTool) CloseSandbox(ctx context.Context) error {
 	b.mu.Lock()
 	pool := b.pool
 	b.pool = nil
+	running := make([]chan struct{}, 0, len(b.running))
+	for done := range b.running {
+		running = append(running, done)
+	}
 	b.mu.Unlock()
+	deadline := time.NewTimer(sandboxDrainTimeout)
+	defer deadline.Stop()
+drain:
+	for _, done := range running {
+		select {
+		case <-done:
+		case <-deadline.C:
+			break drain
+		case <-ctx.Done():
+			break drain
+		}
+	}
 	if pool == nil {
 		return nil
 	}
@@ -179,6 +206,8 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 	if err := ctx.Err(); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("context: %v", err)}
 	}
+
+	defer b.trackRunning()()
 
 	sub, err := b.substrate()
 	if err != nil {
@@ -254,6 +283,23 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 	default:
 		release(sandbox.CauseReleased)
 		return Result{Output: b.withBackpressureNote(string(out.Combined), out.Waited)}
+	}
+}
+
+// trackRunning records an Execute as in flight until the returned func is called.
+func (b *bashTool) trackRunning() func() {
+	done := make(chan struct{})
+	b.mu.Lock()
+	if b.running == nil {
+		b.running = make(map[chan struct{}]struct{})
+	}
+	b.running[done] = struct{}{}
+	b.mu.Unlock()
+	return func() {
+		b.mu.Lock()
+		delete(b.running, done)
+		b.mu.Unlock()
+		close(done)
 	}
 }
 

@@ -6,11 +6,18 @@ import (
 	"os/exec"
 	"sort"
 	"sync"
+	"time"
+
+	"github.com/ethanhinson/fuse/internal/procgroup"
 )
 
 // HandlerHost is the bounded handler identifier for the host substrate. It is a
 // closed enum value used in events and metric labels.
 const HandlerHost = "host"
+
+// pipeWaitDelay is how long a finished or killed process's output pipe may stay
+// open before the call stops waiting for it.
+const pipeWaitDelay = 2 * time.Second
 
 // hostHandler runs commands directly on this machine, in this process's
 // namespace. It is the OFF-SWITCH substrate: it exists only for the case where
@@ -96,6 +103,17 @@ func (r *hostRunner) currentEnv() []string {
 func (r *hostRunner) command(ctx context.Context, cmd string, workingDir string) *exec.Cmd {
 	c := exec.CommandContext(ctx, "/bin/sh", "-c", cmd)
 
+	// The command gets its own process group and the context kills all of it. The
+	// shell of `sleep 100; echo x` forks, so killing the shell alone leaves the
+	// sleep running and holding the output pipe.
+	procgroup.Configure(c)
+	c.Cancel = func() error { return procgroup.Kill(c.Process.Pid) }
+	// A grandchild that left the group can still hold the pipe. WaitDelay stops it
+	// holding this call past the timeout. It also bounds a command that backgrounds
+	// something without redirecting it: the shell exits and the call returns, where
+	// it used to block until the pipe closed.
+	c.WaitDelay = pipeWaitDelay
+
 	// SECURITY-CRITICAL, DO NOT REMOVE OR MAKE CONDITIONAL.
 	//
 	// os/exec treats a nil Cmd.Env as "inherit the parent process
@@ -154,9 +172,11 @@ func (r *hostRunner) command(ctx context.Context, cmd string, workingDir string)
 func (r *hostRunner) Exec(ctx context.Context, cmd string, workingDir string) (Output, error) {
 	c := r.command(ctx, cmd, workingDir)
 
-	combined, err := c.CombinedOutput()
+	captured := newBoundedOutput()
+	c.Stdout, c.Stderr = captured, captured
+	err := c.Run()
 	out := Output{
-		Combined: combined,
+		Combined: captured.Bytes(),
 		// DeadlineExceeded is checked on the caller's context:
 		// exec.CommandContext kills the process when it fires, and the
 		// resulting wait status is indistinguishable from any other signal
@@ -164,7 +184,9 @@ func (r *hostRunner) Exec(ctx context.Context, cmd string, workingDir string) (O
 		TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
 	}
 
-	if err == nil {
+	// ErrWaitDelay means the command exited zero and something it left behind
+	// still held the pipe. That is a success: a non-zero exit would be an ExitError.
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return out, nil
 	}
 
