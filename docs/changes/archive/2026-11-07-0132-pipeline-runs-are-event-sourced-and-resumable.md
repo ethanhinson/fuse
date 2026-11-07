@@ -2,12 +2,12 @@
 id: 132
 slug: 'pipeline-runs-are-event-sourced-and-resumable'
 title: 'Pipeline runs are event-sourced and resumable'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: [127, 131]
 stacked_on:
 related: [115]
@@ -44,3 +44,7 @@ Pipeline lifecycle events on the loop stream, a `PipelineRunStore` folded from t
 ## Out of scope
 
 Running steps on other replicas (0137); changes to the pipeline YAML/schema; idempotency of step side effects (a re-driven step may re-run its tools).
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.

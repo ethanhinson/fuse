@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0132 — Pipeline runs are event-sourced and resumable](../../changes/active/0132-pipeline-runs-are-event-sourced-and-resumable.md)**
+> ↩ **[Change 0132 — Pipeline runs are event-sourced and resumable](../../changes/archive/2026-11-07-0132-pipeline-runs-are-event-sourced-and-resumable.md)**
 <!-- docket:backlink:end -->
 
 # Pipeline runs are event-sourced and resumable

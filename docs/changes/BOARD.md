@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 2 in progress · 🟣 3 groomed · 🟡 11 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 21 killed
+**143 changes** — 🟢 2 in progress · 🟣 3 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 22 killed
 
 ## 🟢 In progress (2)
 
@@ -17,7 +17,7 @@
 | [0135](active/0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md) | build-ready |
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 
-## 🟡 Proposed (11)
+## 🟡 Proposed (10)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -26,7 +26,6 @@
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0137](active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | `medium` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0136](active/0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md) | Loop-scoped secrets can survive a move through an opt-in secret store adapter | `medium` | `feat` | ⏳ waiting on #126 — not yet built |
-| [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #131 — not yet built |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
@@ -53,8 +52,6 @@ graph TD
   0123
   0125
   0128 --> 0129
-  0127 --> 0132
-  0131 --> 0132
   0133
   0135
   0126 --> 0136
@@ -69,16 +66,16 @@ graph TD
   0012:::done
   0052:::done
   0063:::done
-  0127:::done
   0128:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (124)</summary>
+<details><summary>✅🗑️ Archive — done + killed (125)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
+| [0132](archive/2026-11-07-0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | 2026-11-07 |
 | [0131](archive/2026-11-07-0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | 2026-11-07 |
 | [0130](archive/2026-11-07-0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | 2026-11-07 |
 | [0126](archive/2026-11-07-0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | 2026-11-07 |
