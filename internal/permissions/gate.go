@@ -828,7 +828,8 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	// 1. Static floor: parse into segments. A command the parser refuses has
 	// no segment for any later layer, so evalUnparseable matches the protective
 	// rules against its raw text (change 0096): a deny rule denies, an explicit
-	// ask rule is its own verdict as below. Only a human may answer the rest:
+	// ask rule is its own verdict as below. With a classifier bound, a command
+	// routableToClassifier clears goes to it. Only a human may answer the rest:
 	// with a policy stand-in bound it is denied at the rules layer, and with a
 	// human bound it is the countable LayerParse ask it has always been (the
 	// shapes change 0070 targets). Nothing after this step runs for it.
@@ -853,6 +854,14 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			return VerdictDeny, LayerRules, explicitAskReason(pat, true), nil, nil
 		case uv == VerdictAskExplicit:
 			return VerdictAsk, LayerRules, explicitAskReason(pat, false), nil, nil
+		case g.classifier != nil && routableToClassifier(command):
+			v, l, rr, c := g.classifyOrAsk(ctx, name, command, nil)
+			// With only a policy stand-in, an ask must not reach it: it would answer
+			// yes to a command the parser refused.
+			if v == VerdictAsk && g.approvalProvenance == DecidedByPolicy {
+				return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), c, nil
+			}
+			return v, l, rr, c, nil
 		case g.approvalProvenance == DecidedByPolicy:
 			return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), nil, nil
 		default:
