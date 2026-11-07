@@ -456,6 +456,8 @@ func (h *harness) writeConfig() {
 	h.t.Helper()
 	var b strings.Builder
 	fmt.Fprintf(&b, "gateway:\n  url: %s\n  key: %s\n", h.gatewayURL(), h.key)
+	// Three quick attempts keep failure tests fast and their request counts stable.
+	b.WriteString("  max_attempts: 3\n  retry_backoff: 10ms\n")
 	if h.gatewayExtra != "" {
 		b.WriteString("  " + h.gatewayExtra + "\n")
 	}

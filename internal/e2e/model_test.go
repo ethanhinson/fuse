@@ -45,7 +45,6 @@ func Test429WithoutRetryAfter_RetriedThenSucceeds(t *testing.T) {
 }
 
 func Test429RetryAfter_Honored(t *testing.T) {
-	defect(t, "Retry-After is ignored: 429 retried after a fixed 1s backoff (internal/model/adapter.go:456)")
 	t.Parallel()
 	srv := newServer(t, status(429, `{"error":"slow"}`, "Retry-After", "3"), text("recovered"))
 	h := newHarness(t, srv)
@@ -149,7 +148,6 @@ func TestStreamCutPersistent_Nonzero(t *testing.T) {
 // A proxy that closes the stream cleanly (terminating chunk, no [DONE], no
 // finish_reason) is the same lost response as a dropped connection.
 func TestStreamCleanEOFWithoutDone_NotTreatedAsComplete(t *testing.T) {
-	defect(t, "SSE EOF with no [DONE] and no finish_reason is accepted as a complete reply; run exits 0 on partial text (internal/model/adapter.go:656)")
 	t.Parallel()
 	partial := func(w http.ResponseWriter, r *http.Request) {
 		sseHeader(w)
