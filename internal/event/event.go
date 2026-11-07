@@ -40,7 +40,10 @@ const (
 	KindSpawnDone      Kind = "spawn.done"
 	KindSummarize      Kind = "context.summarize"
 	KindLoopTrip       Kind = "loop.detector.trip"
-	KindError          Kind = "error"
+	// KindNoProgress fires when a run has gone too many tool calls without a file
+	// change and the loop nudges the model. It never ends the run.
+	KindNoProgress Kind = "no.progress"
+	KindError      Kind = "error"
 	// KindLoopParked marks an interactive (persistent conversational) loop reaching a
 	// terminal turn and PARKING to await the next human input, rather than finishing.
 	// It is the deterministic "this exchange is complete, send your next message"
@@ -343,6 +346,10 @@ type ModelCallEndPayload struct {
 	// FinishReason is the gateway's finish_reason for the reply ("stop",
 	// "length", ...); "length" marks a reply cut at the output cap.
 	FinishReason string `json:"finish_reason,omitempty"`
+	// Discarded marks a reply the loop threw away because it was cut off and
+	// unusable. Its tokens still count, but it never enters the transcript, so a
+	// resume must not fold it back in.
+	Discarded bool `json:"discarded,omitempty"`
 }
 
 // ModelDeltaPayload carries one incremental token chunk (Stage B).
@@ -442,10 +449,15 @@ type LoopParkedPayload struct {
 // for people and tools reading the stream. It names secrets but never holds
 // their values. It does include the bodies of any skills the spec carries (at
 // most 262144 bytes in total, change 0118).
+//
+// InstalledSkillsDigest (change 0134) is the digest of the server's installed
+// skill set at the moment the loop started; a resume on a replica whose set
+// differs logs skills_drift (non-fatal).
 type LoopHarnessPayload struct {
-	Spec      json.RawMessage `json:"spec"`
-	SpecBytes []byte          `json:"spec_bytes"`
-	Digest    string          `json:"digest"`
+	Spec                  json.RawMessage `json:"spec"`
+	SpecBytes             []byte          `json:"spec_bytes"`
+	Digest                string          `json:"digest"`
+	InstalledSkillsDigest string          `json:"installed_skills_digest,omitempty"`
 }
 
 // MCPServerPayload accompanies KindMCPServer. Tools are the tool names exposed
@@ -713,4 +725,12 @@ type LoopCancelledPayload struct {
 	// already held an earlier one (the first is authoritative). It records the
 	// writer's own seal, never a second cancel, so it is never counted as one.
 	Superseded bool `json:"superseded,omitempty"`
+}
+
+// NoProgressPayload accompanies KindNoProgress: Calls tool calls across the agent
+// tree since the last file change, against a nudge interval of Threshold.
+type NoProgressPayload struct {
+	Turn      int   `json:"turn"`
+	Calls     int64 `json:"calls"`
+	Threshold int   `json:"threshold"`
 }

@@ -50,6 +50,26 @@ func (b *localBackend) send(ctx context.Context, id LoopID, input string, opts S
 	return runtime.SendOrSteer(ctx, b.rt, b.tenant, id, input, runtime.SteerOpts{Interrupt: opts.Interrupt, Source: opts.Source})
 }
 
+// cancel type-asserts the runtime's optional Canceller capability and delegates,
+// mapping its result to the SDK's CancelResult. A runtime without the capability
+// fails with ErrCancelUnsupported (the remote parity is connect Unimplemented).
+func (b *localBackend) cancel(ctx context.Context, id LoopID, reason string) (CancelResult, error) {
+	c, ok := b.rt.(runtime.Canceller)
+	if !ok {
+		return CancelResult{}, ErrCancelUnsupported
+	}
+	res, err := c.Cancel(ctx, b.tenant, id, reason, "")
+	if err != nil {
+		return CancelResult{}, mapSeamError(err)
+	}
+	return CancelResult{
+		Outcome:     CancelOutcome(res.Outcome),
+		WasLive:     res.WasLive,
+		TerminalSeq: res.TerminalSeq,
+		Reason:      res.Reason,
+	}, nil
+}
+
 // capabilities always fails: an in-process runtime has no operator to
 // advertise.
 func (b *localBackend) capabilities(context.Context) (Capabilities, error) {

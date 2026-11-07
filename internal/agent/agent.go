@@ -33,6 +33,10 @@ type Renderer interface {
 
 // Agent binds a model, a tool set, a renderer, and run limits.
 type Agent struct {
+	// noProgressCalls and maxRunTokens guard a run against spending without
+	// producing anything; see progress.go.
+	noProgressCalls int
+	maxRunTokens    int64
 	// ReasoningEffort is sent on the agent's own model calls when set. The
 	// summarizer and classifier keep their own settings.
 	ReasoningEffort string
@@ -45,6 +49,9 @@ type Agent struct {
 	systemPrompt string
 	maxTurns     int
 	maxTokens    int
+	// outputCeilingTokens is the highest output cap a truncated reply may raise
+	// maxTokens to; 0 uses defaultOutputCeilingFactor.
+	outputCeilingTokens int
 
 	// ContextWindow is the model's context size in tokens; 0 uses the
 	// default (128k). The loop prunes old tool results when the estimated
@@ -278,6 +285,21 @@ func (a *Agent) SetSeedSummary(text string) { a.seedSummary = text }
 // wants.
 func (a *Agent) SetMaxTurns(n int) { a.maxTurns = n }
 
+// SetNoProgressCalls sets how many tool calls a run may make without a file change
+// before the loop nudges the model. nil keeps DefaultNoProgressCalls; 0 turns the
+// check off.
+func (a *Agent) SetNoProgressCalls(n *int) {
+	if n == nil {
+		a.noProgressCalls = DefaultNoProgressCalls
+		return
+	}
+	a.noProgressCalls = *n
+}
+
+// SetMaxRunTokens caps the input and output tokens the whole agent tree may use in
+// one run. 0, the default, means no cap.
+func (a *Agent) SetMaxRunTokens(n int64) { a.maxRunTokens = n }
+
 // SetUsageSink installs the callback that receives each model call's token usage.
 // Bindings wire it to the agent's tree node (AgentNode.UpdateTokens) so session and
 // pool token ceilings trip in every host, not only under the TUI renderer.
@@ -346,6 +368,10 @@ func (a *Agent) SetSummarizer(s *summarizer, sink SegmentSink) {
 	}
 	a.segmentSink = sink
 }
+
+// SetOutputCeiling sets the highest output cap a truncated reply may raise
+// max_tokens to. 0 keeps the default of defaultOutputCeilingFactor x max_tokens.
+func (a *Agent) SetOutputCeiling(tokens int) { a.outputCeilingTokens = tokens }
 
 // EnableSummarization is the exported wiring entry point for Tier 2 (change
 // 0027): it builds the bounded summarizer from c (a Completer decorated with
@@ -467,13 +493,14 @@ func (a *Agent) EnableRelevanceClassifier(c Completer, modelID string, batchSize
 // backstop now lives at the call site in cmd/fuse. See change 0038.
 func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, maxTurns, maxTokens int) *Agent {
 	return &Agent{
-		model:        m,
-		tools:        t,
-		renderer:     r,
-		modelID:      modelID,
-		systemPrompt: systemPrompt,
-		maxTurns:     maxTurns,
-		maxTokens:    maxTokens,
+		model:           m,
+		tools:           t,
+		renderer:        r,
+		modelID:         modelID,
+		systemPrompt:    systemPrompt,
+		maxTurns:        maxTurns,
+		noProgressCalls: DefaultNoProgressCalls,
+		maxTokens:       maxTokens,
 		// Relevance-aware pruning is always on (change 0028): the heuristic
 		// scorer is the default so pruneOldToolResults never sees a nil scorer.
 		relevanceScorer: defaultHeuristicScorer(),

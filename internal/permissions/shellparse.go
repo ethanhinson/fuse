@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"errors"
+	"fmt"
 	"path"
 	"regexp"
 	"strings"
@@ -13,7 +14,62 @@ import (
 // cannot be safely decomposed into simple-command segments. The caller must
 // fail closed: treat the whole command as a single opaque, non-approvable unit
 // (prompt in interactive mode, deny in auto mode's non-interactive posture).
+//
+// Callers that need to know WHY a command was refused use errors.As to recover
+// the *ParseError; the sentinel itself stays the byte-for-byte compatibility
+// hook, so every existing errors.Is(err, ErrUnparseable) site keeps reading
+// true.
 var ErrUnparseable = errors.New("permissions: command is unparseable")
+
+// ParseError is the rich error returned by splitSegments. Reason names the
+// shell construct or command responsible for the refusal (a short, stable
+// token: "command substitution", "arbitrary-arg wrapper (sudo)", "path-
+// qualified argv0", …) so the parse-layer permission decision can carry it
+// into the audit trail. Unwrap returns ErrUnparseable so errors.Is continues
+// to identify the fail-closed outcome.
+type ParseError struct {
+	Reason string
+}
+
+func (e *ParseError) Error() string {
+	if e == nil || e.Reason == "" {
+		return ErrUnparseable.Error()
+	}
+	return ErrUnparseable.Error() + ": " + e.Reason
+}
+
+func (e *ParseError) Unwrap() error { return ErrUnparseable }
+
+// parseReject builds the *ParseError every refusal site returns. Centralised so
+// the refusal vocabulary lives in one place and the gate has one place to look
+// when it logs a parse-floor decision.
+func parseReject(reason string) error {
+	return &ParseError{Reason: reason}
+}
+
+// parseRejectf formats a reason around a construct name (the wrapper that was
+// unpeelable, the wrapper that hides a shell-state builtin, etc.) so refusal
+// sites don't each reinvent the same parenthetical.
+func parseRejectf(reasonFmt string, name string) error {
+	return &ParseError{Reason: fmt.Sprintf(reasonFmt, name)}
+}
+
+// stmtCmdName names the syntax.Stmt.Cmd node for a refusal reason. It strips
+// the package prefix mvdan.cc/sh stamps on its concrete types so the audit
+// trail reads "FuncDecl" rather than the longer internal name.
+func stmtCmdName(cmd syntax.Command) string {
+	if cmd == nil {
+		return "nil"
+	}
+	full := fmt.Sprintf("%T", cmd)
+	if i := strings.LastIndexByte(full, '.'); i >= 0 {
+		full = full[i+1:]
+	}
+	if i := strings.IndexByte(full, '*'); i >= 0 {
+		full = full[i+1:]
+	}
+	return full
+}
 
 // maxCommandBytes caps the input length. Oversized commands fail closed rather
 // than feed an unbounded parse. Roughly Grok Build's ~10k character cap.
@@ -758,12 +814,12 @@ func assignOnlyIsSafe(src string, assigns []*syntax.Assign, out *[]Segment) bool
 // a function declaration above all (change 0070 D3).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
-		return nil, ErrUnparseable
+		return nil, parseReject("command over the length cap")
 	}
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
 	file, err := parser.Parse(strings.NewReader(cmd), "")
 	if err != nil {
-		return nil, ErrUnparseable
+		return nil, parseReject("shell parse error")
 	}
 
 	var segs []Segment
@@ -810,7 +866,7 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 	for _, r := range st.Redirs {
 		target, ok := redirWriteTarget(r)
 		if !ok {
-			return ErrUnparseable
+			return parseReject("redirect target not statically resolvable")
 		}
 		if target != "" {
 			writeTargets = append(writeTargets, target)
@@ -836,7 +892,7 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 		// (`> out.txt`, `FOO=1 > out.txt`, `env FOO=1 > out.txt` — all of which
 		// truncate the target). There is no segment to carry the target, so the
 		// write would be invisible to every downstream layer. Fail closed.
-		return ErrUnparseable
+		return parseReject("redirect without a command to carry its target")
 	}
 	for i := start; i < len(*out); i++ {
 		(*out)[i].WriteTargets = append((*out)[i].WriteTargets, writeTargets...)
@@ -904,7 +960,7 @@ func collectStmtCmd(src string, st *syntax.Stmt, out *[]Segment) error {
 		// Descending it would report the body's segments as if they were what
 		// runs, which is a lie in both directions. Do not "finish the job" by
 		// adding a FuncDecl case — TestSplitSegments_FailClosed pins this.
-		return ErrUnparseable
+		return parseReject("unmodelled shell construct (" + stmtCmdName(cmd) + ")")
 	}
 }
 
@@ -937,21 +993,21 @@ func collectIf(src string, cmd *syntax.IfClause, out *[]Segment) error {
 // deny layer as a curl.
 func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
 	if cmd.Word == nil {
-		return ErrUnparseable
+		return parseReject("case statement with no discriminant")
 	}
 	if _, _, ok := classifyWord(src, cmd.Word, out); !ok {
-		return ErrUnparseable
+		return parseReject("case discriminant not statically resolvable")
 	}
 	for _, item := range cmd.Items {
 		if item == nil {
-			return ErrUnparseable
+			return parseReject("case branch with no statement list")
 		}
 		for _, pat := range item.Patterns {
 			if pat == nil {
-				return ErrUnparseable
+				return parseReject("case pattern with no word")
 			}
 			if _, _, ok := classifyWord(src, pat, out); !ok {
-				return ErrUnparseable
+				return parseReject("case pattern not statically resolvable")
 			}
 		}
 		if err := collectStmts(src, item.Stmts, out); err != nil {
@@ -981,14 +1037,14 @@ func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
 func collectLoopHeader(src string, loop syntax.Loop, out *[]Segment) error {
 	iter, ok := loop.(*syntax.WordIter)
 	if !ok {
-		return ErrUnparseable
+		return parseReject("c-style for loop header (arithmetic, not words)")
 	}
 	for _, item := range iter.Items {
 		if item == nil {
-			return ErrUnparseable
+			return parseReject("for-clause item with no word")
 		}
 		if _, _, ok := classifyWord(src, item, out); !ok {
-			return ErrUnparseable
+			return parseReject("for-clause item not statically resolvable")
 		}
 	}
 	return nil
@@ -1132,12 +1188,12 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 	// arguments, and a downstream path-scoper or deny matcher must not see them.
 	if len(call.Args) == 0 {
 		if !assignOnlyIsSafe(src, call.Assigns, out) {
-			return ErrUnparseable
+			return parseReject("assignment-only statement not on the inert allowlist")
 		}
 		return nil
 	}
 	if !assignsAreBenign(call.Assigns) {
-		return ErrUnparseable
+		return parseReject("env-var assignment prefix not on the inert allowlist")
 	}
 
 	// Classify every word as literal or OPAQUE, failing closed on any expansion
@@ -1151,7 +1207,7 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 	for _, w := range call.Args {
 		text, opaque, ok := classifyWord(src, w, out)
 		if !ok {
-			return ErrUnparseable
+			return parseReject("word not statically resolvable")
 		}
 		words.text = append(words.text, text)
 		words.opaque = append(words.opaque, opaque)
@@ -1178,10 +1234,10 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 peel:
 	for {
 		if words.len() == 0 {
-			return ErrUnparseable
+			return parseReject("wrapper peeled down to no inner command")
 		}
 		if words.opaqueAt(0) {
-			return ErrUnparseable
+			return parseReject("opaque command name")
 		}
 		if strings.ContainsRune(words.at(0), '/') {
 			break peel
@@ -1192,19 +1248,19 @@ peel:
 		case isWrapper:
 			peeled, ok := peelWrapperArgs(words, spec)
 			if !ok {
-				return ErrUnparseable
+				return parseRejectf("wrapper (%s) with an unmodelled flag or value", base)
 			}
 			words = peeled
 		case base == "timeout":
 			peeled, ok := peelTimeout(words)
 			if !ok {
-				return ErrUnparseable
+				return parseReject("timeout with an unmodelled flag, missing duration, or non-duration operand")
 			}
 			words = peeled
 		case base == "env":
 			peeled, ok := peelEnv(words)
 			if !ok {
-				return ErrUnparseable
+				return parseReject("env with an unmodelled flag, unrecognised assignment, or non-inert prefix")
 			}
 			if peeled.len() == 0 {
 				// `env` alone, or `env FOO=1`, prints the environment and runs
@@ -1223,7 +1279,7 @@ peel:
 	// Path-qualified argv[0] (./sed, /tmp/git) fails closed: basename
 	// matching must never collapse a path to a bare name.
 	if strings.ContainsRune(argv0, '/') {
-		return ErrUnparseable
+		return parseReject("path-qualified argv0 (basename matching must not collapse a path to a bare name)")
 	}
 
 	name := basename(argv0)
@@ -1234,12 +1290,12 @@ peel:
 	if name == "bash" || name == "sh" {
 		script, ok := dashCScript(words.drop(1))
 		if !ok {
-			return ErrUnparseable
+			return parseReject("bash/sh invocation without a parseable -c script")
 		}
 		inner := syntax.NewParser(syntax.Variant(syntax.LangBash))
 		file, err := inner.Parse(strings.NewReader(script), "")
 		if err != nil {
-			return ErrUnparseable
+			return parseReject("bash -c script failed to parse")
 		}
 		// Every segment the script yields carries the OUTER call's source text
 		// as Raw (change 0093), so a protective rule naming the wrapper
@@ -1260,14 +1316,14 @@ peel:
 
 	// Any other arbitrary-arg wrapper as argv[0] fails closed.
 	if arbitraryArgWrappers[name] {
-		return ErrUnparseable
+		return parseRejectf("arbitrary-arg wrapper (%s)", name)
 	}
 
 	// Shell-state builtins (alias, set, export, …) also fail closed, checked
 	// here — after peeling — so a wrapper cannot hide them: these change what
 	// later words and commands mean, so the parser must not reason past them.
 	if refusesShellState(name, words.drop(1).text, words.drop(1).opaque) {
-		return ErrUnparseable
+		return parseRejectf("shell-state builtin (%s)", name)
 	}
 
 	args := words.drop(1)
@@ -1276,7 +1332,7 @@ peel:
 	// before the subcommand where no other rule looks, so an unmodellable one
 	// must fail closed rather than be stepped over.
 	if name == "git" && refusesGitOptions(args.text, args.opaque) {
-		return ErrUnparseable
+		return parseReject("git invocation with an unmodelled global option")
 	}
 
 	seg := Segment{
@@ -1293,7 +1349,7 @@ peel:
 	if name == "git" {
 		targets, ok := gitOutputTargets(seg)
 		if !ok {
-			return ErrUnparseable
+			return parseReject("git --output target not statically resolvable")
 		}
 		seg.WriteTargets = append(seg.WriteTargets, targets...)
 	}

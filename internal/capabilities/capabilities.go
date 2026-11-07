@@ -21,6 +21,10 @@ type Capabilities struct {
 	Models []Model
 	// Skills are the installed skills a spec may name.
 	Skills []Skill
+	// SkillsDigest is the sha256 digest over the installed skill set (change
+	// 0134), so a client can detect changes and two replicas over one source
+	// can be verified consistent.
+	SkillsDigest string
 	// Ceilings are the operator limits tighten-only spec fields are held to.
 	Ceilings []Ceiling
 	// SecretRefs are the secret names that resolve for the tenant.

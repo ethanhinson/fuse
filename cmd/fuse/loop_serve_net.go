@@ -366,19 +366,34 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	approve := permissions.AlwaysApprove
 
 	// Load skills + tools EXACTLY as runLoopServer does so the two bindings serve an
-	// identically-wired Runtime.
-	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
+	// identically-wired Runtime. Installed skills come from the configured source,
+	// refreshed on the configured interval (change 0134).
+	src, serr := skillSourceFromConfig(cfg)
 	if serr != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	systemBlock := rootSystemBlock(cfg, skillSet)
+	skillSet, stopSkills, serr := startSkillsRefresh(context.Background(), src, cfg.Skills.RefreshDuration(), func() {})
+	if serr != nil {
+		fmt.Fprintf(stderr, "skills error: %v\n", serr)
+		return 1
+	}
+	defer stopSkills()
+	liveSet, _ := skillSet.Load()
+	systemBlock := rootSystemBlock(cfg, liveSet)
+	skillLookup := func(name string) (skills.Skill, bool) {
+		set, _ := skillSet.Load()
+		if set == nil {
+			return skills.Skill{}, false
+		}
+		return set.Lookup(name)
+	}
 	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=TRUE: this
 	// binding serves remote principals over the network, so no local file may
 	// authorize running their commands uncontained on this host.
 	sb, closeEgress := newSandboxService(cfg, true, stderr)
 	defer closeEgress()
-	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillLookup)
 
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
 	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so
@@ -445,7 +460,6 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintf(stderr, "loop-serve-net: per-tenant loop limits on (default max_live_loops=%d starts_per_minute=%d, 0 = unlimited; %d tenant overrides)\n",
 			d.MaxLiveLoops, d.StartsPerMinute, len(cfg.LoopServer.Limits.Tenants))
 	}
-
 	ln, err := netListen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: listen %s: %v\n", *addr, err)
@@ -454,6 +468,12 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 
 	ctx, stop := serveNetContext()
 	defer stop()
+	// The limiter's per-tenant maps are keyed by tenant ids the operator does
+	// not bound (prefix-admitted tenants), so a tenant that ever started a loop
+	// leaves a bucket and a lock behind forever. The sweeper drops both once a
+	// tenant is idle: bucket refilled to capacity, lock unheld, no in-flight
+	// start. Bound to the serve ctx, so it exits with the server.
+	limiter.StartSweeper(ctx, loopTenantSweepInterval)
 	if err := obs.startMetricsEndpoint(ctx, verifier); err != nil {
 		_ = ln.Close()
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
@@ -480,6 +500,12 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	}
 	return 0
 }
+
+// loopTenantSweepInterval is how often the per-tenant limiter's idle state is
+// swept. A bucket only becomes sweepable after a full refill (at least a
+// minute of idle at the configured start rate), so a minute-scale sweep is
+// tight enough to bound the maps and rare enough to be free.
+const loopTenantSweepInterval = time.Minute
 
 // serveNet mounts the connect-go LoopService handler on one http.ServeMux and serves
 // it over ln (h2c) until ctx is cancelled, then shuts the server down. It is the

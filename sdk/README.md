@@ -1,12 +1,12 @@
 # fuse Go SDK (`github.com/ethanhinson/fuse/sdk/fuse`)
 
 A small Go library that exposes fuse's **Runtime-parity** loop-control surface — `StartLoop` /
-`Send` / `Observe`, keyed on `loopID` — over **either** a local in-process runtime **or** a remote
+`Send` / `Cancel` / `Observe`, keyed on `loopID` — over **either** a local in-process runtime **or** a remote
 hosted runtime, chosen by the constructor. The same method surface works local-or-remote (change
 0050). The TypeScript sibling lives in [`../sdk/ts`](../sdk/ts).
 
 The network is **surfaced, not hidden**: the event stream, the replay cursor (`fromSeq`), gap
-markers, and the **explicit completion event** (`loop.parked`) are all first-class — a client never
+markers, and the **explicit completion events** (`loop.parked`, `loop.cancelled`) are all first-class — a client never
 infers "this exchange is done, safe to send the next turn" from the *shape* of the stream.
 
 ## Install
@@ -24,10 +24,19 @@ func (c *Client) StartLoop(ctx, StartLoopConfig) (LoopID, error)
 func (c *Client) Send(ctx, id LoopID, input string) error
 func (c *Client) Interrupt(ctx, id LoopID, input string) error            // Send that cancels the loop's current step so the message lands now
 func (c *Client) SendWith(ctx, id LoopID, input string, SendOptions) error // Interrupt, and/or Source: SourceHuman | SourceOrchestrator
+func (c *Client) Cancel(ctx, id LoopID, reason string) (CancelResult, error) // stop and seal a loop (idempotent)
 func (c *Client) Observe(ctx, id LoopID, fromSeq Seq) (<-chan Event, func(), error)
 func (c *Client) Capabilities(ctx) (Capabilities, error)              // what this tenant may use in a spec
 
-func IsCompletion(e Event) bool   // true on the loop.parked completion event
+func IsCompletion(e Event) bool   // true on the loop.parked / loop.cancelled completion events
+
+type CancelOutcome int // CancelOutcomeCancelled | CancelOutcomeAlreadyCancelled | CancelOutcomeCancelling
+type CancelResult struct {
+    Outcome     CancelOutcome
+    WasLive     bool   // the cancel interrupted a running or parked loop
+    TerminalSeq Seq    // seq of loop.cancelled; 0 when not yet known
+    Reason      string // the recorded reason (the first cancel's on AlreadyCancelled)
+}
 
 type StartLoopConfig struct {
     Task, Model string
@@ -46,7 +55,30 @@ type LoopID = string
 ```
 
 Sentinel errors: `ErrUnauthenticated`, `ErrPermissionDenied`, `ErrLoopNotFound`, `ErrLoopFinished`,
-`ErrHarnessUnsupported`, `ErrCapabilitiesUnsupported`.
+`ErrHarnessUnsupported`, `ErrCapabilitiesUnsupported`, `ErrCancelUnsupported`.
+
+## Cancel a loop
+
+`Cancel` stops a loop and seals it so it never runs again: its in-flight work is
+cancelled, `loop.cancelled` is appended as the last event of its stream, and the loop
+never accepts another `Send`. It is idempotent — a repeat call returns
+`CancelOutcomeAlreadyCancelled` with the first cancel's reason and terminal seq.
+
+```go
+res, err := c.Cancel(ctx, id, "operator stop")
+if errors.Is(err, fuse.ErrCancelUnsupported) {
+    // this runtime cannot cancel loops
+}
+if res.Outcome == fuse.CancelOutcomeCancelled {
+    fmt.Printf("sealed at seq %d (was live: %v)\n", res.TerminalSeq, res.WasLive)
+}
+```
+
+`CancelOutcomeCancelling` means the cancel is recorded but the terminal event has not
+landed yet (another replica owns the loop); `TerminalSeq` is 0. Either way,
+`IsCompletion` reports true on the `loop.cancelled` event when it arrives on `Observe`,
+just as it does on `loop.parked`. Remotely, cancel needs the `loop:cancel` scope (or
+`loop:admin`).
 
 ## Start a loop from a harness spec
 

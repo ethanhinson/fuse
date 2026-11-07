@@ -9,22 +9,26 @@ type Gateway struct {
 	URL string `yaml:"url"`
 	Key string `yaml:"key"`
 	// RequestTimeout bounds ONE gateway attempt (connect through the full
-	// streamed body) as a Go duration string ("5m", "20m"). Empty ⇒ the
-	// adapter's built-in 5m. Reasoning models served through OpenRouter can
-	// stream 30k–60k thinking tokens before their first visible byte, which
-	// overruns 5m and burns every retry; a per-deployment knob is the fix, not
-	// a bigger constant. Not a credential or permission surface, so it is
+	// streamed body) as a Go duration string ("5m", "20m"). Empty means no limit
+	// on total time for a local run and 30m on a hosted loop server, where nobody
+	// can cancel a call that never ends. Reasoning models can stream 30k–60k
+	// thinking tokens before their first visible byte, so a slow response is not
+	// a failure; a silent one ends through the adapter's idle timeout. Not a credential or permission surface, so it is
 	// honored from .fuse.local.yml as well (the worst case is a longer wait).
 	RequestTimeout string `yaml:"request_timeout"`
 }
 
 // ModelConfig is a single named model entry.
 type ModelConfig struct {
-	ID            string `yaml:"id"`
-	MaxTokens     int    `yaml:"max_tokens"`
-	ContextWindow int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
-	Persona       string `yaml:"persona"`
-	SystemPrefix  string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	ID        string `yaml:"id"`
+	MaxTokens int    `yaml:"max_tokens"`
+	// MaxTokensCeiling is the highest output cap a truncated reply may raise
+	// max_tokens to, since reasoning spends the same budget as the reply. 0 = four
+	// times max_tokens; set it equal to max_tokens to make max_tokens a hard limit.
+	MaxTokensCeiling int    `yaml:"max_tokens_ceiling"`
+	ContextWindow    int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
+	Persona          string `yaml:"persona"`
+	SystemPrefix     string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
 	// ReasoningEffort is sent as reasoning_effort on this model's agent calls:
 	// none, minimal, low, medium, high or xhigh. Empty sends nothing and leaves
 	// the provider's default. Providers differ in how they honour it.
@@ -45,6 +49,35 @@ type ModelConfig struct {
 type ModelsConfig struct {
 	Default string
 	Entries map[string]ModelConfig
+}
+
+// SkillsConfig is the installed-skills source selection (change 0134). Source
+// names the adapter: "fs" (filesystem directories, the default) or "postgres"
+// (the skills table in the configured Postgres, under the pgstore build).
+// Dirs is the filesystem directory list — empty falls back to
+// skills.DefaultDirs(). Refresh is how often the server bindings reload the
+// source to follow installed-skill changes; a failed refresh keeps the last
+// good set.
+type SkillsConfig struct {
+	Source  string   `yaml:"source"`
+	Dirs    []string `yaml:"dirs"`
+	Refresh string   `yaml:"refresh"`
+}
+
+// DefaultSkillsRefresh is the refresh interval used when skills.refresh is
+// unset (change 0134).
+const DefaultSkillsRefresh = 30 * time.Second
+
+// RefreshDuration resolves Refresh; zero duration (unset) means the default.
+func (s SkillsConfig) RefreshDuration() time.Duration {
+	if s.Refresh == "" {
+		return DefaultSkillsRefresh
+	}
+	d, err := time.ParseDuration(s.Refresh)
+	if err != nil || d <= 0 {
+		return DefaultSkillsRefresh
+	}
+	return d
 }
 
 // PermissionsConfig controls the HITL gate behaviour.
@@ -562,14 +595,25 @@ type Config struct {
 	Gateway    Gateway
 	Models     ModelsConfig
 	SkillPaths []string
+	// Skills configures where the installed skill set comes from (change 0134):
+	// a filesystem directory list or a Postgres table, with a refresh interval
+	// the server bindings use to follow the source. When Dirs is empty the
+	// call site falls back to skills.DefaultDirs().
+	Skills SkillsConfig
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
 	// a non-nil 0 = explicitly unlimited everywhere; a non-nil N>0 caps every
 	// context. Same omitted-key discipline as Permissions.SessionAllow. (0038)
-	MaxTurns    *int
-	MaxTokens   int
-	Permissions PermissionsConfig
+	MaxTurns *int
+	// NoProgressCalls is how many tool calls a headless run may make without a
+	// file change before the model is nudged. nil = the agent default; 0 = off.
+	NoProgressCalls *int
+	// MaxRunTokens caps the input and output tokens one run's whole agent tree may
+	// use. 0 = no cap.
+	MaxRunTokens int64
+	MaxTokens    int
+	Permissions  PermissionsConfig
 	// Orchestrator configures the steering side-channel (/orchestrator).
 	Orchestrator OrchestratorConfig
 	MCPServers   []MCPServerConfig
@@ -729,14 +773,17 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway      Gateway                `yaml:"gateway"`
-	Models       map[string]interface{} `yaml:"models"`
-	SkillPaths   []string               `yaml:"skill_paths"`
-	MaxTurns     *int                   `yaml:"max_turns"`
-	MaxTokens    int                    `yaml:"max_tokens"`
-	Instructions string                 `yaml:"instructions"`
-	NoTools      bool                   `yaml:"no_tools"`
-	Permissions  rawPermissionsConfig   `yaml:"permissions"`
+	Gateway         Gateway                `yaml:"gateway"`
+	Models          map[string]interface{} `yaml:"models"`
+	SkillPaths      []string               `yaml:"skill_paths"`
+	Skills          SkillsConfig           `yaml:"skills"`
+	MaxTurns        *int                   `yaml:"max_turns"`
+	NoProgressCalls *int                   `yaml:"no_progress_calls"`
+	MaxRunTokens    int64                  `yaml:"max_run_tokens"`
+	MaxTokens       int                    `yaml:"max_tokens"`
+	Instructions    string                 `yaml:"instructions"`
+	NoTools         bool                   `yaml:"no_tools"`
+	Permissions     rawPermissionsConfig   `yaml:"permissions"`
 	// Orchestrator is the steering side-channel's model choice (trusted-only).
 	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
 	MCPServers   []MCPServerConfig  `yaml:"mcp_servers"`
@@ -954,7 +1001,7 @@ func Default() Config {
 			Summarization: SummarizationConfig{
 				Enabled:   true,
 				Threshold: 0.85,
-				MaxOutput: 2000,
+				MaxOutput: 8000,
 			},
 			// Relevance-aware pruning defaults on (change 0028). Heuristic-only
 			// (ClassifierModel empty); the recency floor keeps the newest half of
@@ -995,5 +1042,9 @@ func Default() Config {
 				},
 			},
 		},
+		// Installed skills come from the filesystem by default (change 0134):
+		// dirs fall back to skills.DefaultDirs() at the call site, refresh is
+		// 30s.
+		Skills: SkillsConfig{Source: "fs", Refresh: "30s"},
 	}
 }

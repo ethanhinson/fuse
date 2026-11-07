@@ -89,6 +89,10 @@ func (cs *classifierScorer) borderline(h float64) bool {
 	return h >= cs.lo && h <= cs.hi && cs.lo < cs.hi
 }
 
+// relevanceMaxTokens bounds the score reply. The cap also pays for reasoning, and
+// a reply cut off before its scores silently falls back to the heuristic.
+const relevanceMaxTokens = 1024
+
 // classify sends a batch of candidates to the model and parses one [0,1] score
 // per candidate, in input order. Returns (scores, false) on any transport error,
 // empty response, or a response that does not yield a score for every candidate
@@ -101,7 +105,7 @@ func (cs *classifierScorer) classify(ctx context.Context, batch []ToolResult, sc
 		Model:      cs.modelID,
 		Messages:   cs.buildMessages(batch, sctx),
 		ToolChoice: "none",
-		MaxTokens:  256,
+		MaxTokens:  relevanceMaxTokens,
 	}
 	callCtx, span := cs.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: cs.modelID}}})
 	resp, err := cs.completer.Complete(callCtx, req)
