@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0126 — Fenced loop ownership and cross-replica activity in the loop registry](../../changes/active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md)**
+> ↩ **[Change 0126 — Fenced loop ownership and cross-replica activity in the loop registry](../../changes/archive/2026-11-07-0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md)**
 <!-- docket:backlink:end -->
 
 # Fenced loop ownership and cross-replica activity in the loop registry

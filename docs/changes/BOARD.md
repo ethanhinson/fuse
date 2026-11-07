@@ -1,13 +1,12 @@
 # Backlog
 
-**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 12 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 18 killed
+**143 changes** — 🟢 2 in progress · 🟣 4 groomed · 🟡 12 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 19 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0129](active/0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) | `feat/per-loop-workspace-adapter-and-confined-file-tools` | building |
-| [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
 ## 🟣 Groomed (4)
@@ -55,7 +54,6 @@ graph TD
   0111
   0123
   0125
-  0126
   0128 --> 0129
   0129 --> 0130
   0127 --> 0131
@@ -80,11 +78,12 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (121)</summary>
+<details><summary>✅🗑️ Archive — done + killed (122)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
+| [0126](archive/2026-11-07-0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | 2026-11-07 |
 | [0124](archive/2026-11-07-0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | 2026-11-07 |
 | [0122](archive/2026-11-07-0122-spawn-start-names-the-worker-a-child-was-bound-to.md) | spawn.start names the worker a child was bound to | 2026-11-07 |
 | [0121](archive/2026-11-07-0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | 2026-11-07 |

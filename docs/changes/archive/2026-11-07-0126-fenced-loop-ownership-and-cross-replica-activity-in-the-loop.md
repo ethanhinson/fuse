@@ -2,12 +2,12 @@
 id: 126
 slug: 'fenced-loop-ownership-and-cross-replica-activity-in-the-loop'
 title: 'Fenced loop ownership and cross-replica activity in the loop registry'
-status: 'in-progress'
+status: 'killed'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [47, 54, 106, 117, 120]
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch: 'fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop'
+branch:
 pr:
 blocked_by:
 reconciled: true
@@ -31,7 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md](../../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) |
-| Plan | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md](../../superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) |
+| Plan | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) |
 | ADRs | [ADR-0079](../../adrs/0079-loop-ownership-is-a-fenced-lease-with-compare-and-set-on-the.md) |
 <!-- docket:artifacts:end -->
 
@@ -52,3 +52,7 @@ Leader election, moving a live loop between replicas on purpose, changing the le
 ### 2026-11-03
 
 Unchanged against main 5eb0925: the registry contract, both backends and the inproc resume/renewer paths still match the spec pointers; no overlapping in-flight change (0120 stays out of scope).
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Replica fencing no longer applies; no run was live and no PR was opened.
