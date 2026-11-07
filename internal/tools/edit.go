@@ -43,6 +43,24 @@ func (editTool) Execute(ctx context.Context, args string) Result {
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
 	}
+
+	// Check staleness: if this agent has state for the file, verify the file
+	// has not changed on disk since the agent last read or wrote it.
+	canonical, err := resolvePath(a.Path)
+	if err != nil {
+		return Result{IsError: true, Output: err.Error()}
+	}
+	if ft := FileTrackerFrom(ctx); ft != nil && ft.HasState(canonical) {
+		if fi, statErr := os.Stat(canonical); statErr == nil {
+			if ft.IsStale(canonical, fi.ModTime(), fi.Size()) {
+				return Result{
+					IsError: true,
+					Output:  fmt.Sprintf("refusing to edit %s because it changed on disk since this agent last read or wrote it — read_file it again first", a.Path),
+				}
+			}
+		}
+	}
+
 	data, err := os.ReadFile(a.Path)
 	if err != nil {
 		return Result{IsError: true, Output: err.Error()}
@@ -59,5 +77,13 @@ func (editTool) Execute(ctx context.Context, args string) Result {
 	if err := os.WriteFile(a.Path, []byte(updated), 0o644); err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
+
+	// Record the write in the file tracker.
+	if ft := FileTrackerFrom(ctx); ft != nil {
+		if fi, statErr := os.Stat(canonical); statErr == nil {
+			ft.MarkWritten(canonical, fi.ModTime(), fi.Size())
+		}
+	}
+
 	return Result{Output: fmt.Sprintf("edited %s (1 replacement)", a.Path)}
 }
