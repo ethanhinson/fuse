@@ -1,6 +1,6 @@
 # Backlog
 
-**150 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**151 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 11 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (10)
+## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0151](active/0151-task-container-image-and-entrypoint.md) | Task container image and entrypoint | `medium` | `feat` | needs-grooming |
 | [0150](active/0150-per-model-profiles-for-prompt-edit-tool-and-effort.md) | Per-model profiles for prompt, edit tool and effort | `medium` | `feat` | needs-grooming |
 | [0149](active/0149-resume-a-previous-shell-session.md) | Resume a previous shell session | `medium` | `feat` | needs-grooming |
 | [0148](active/0148-show-edit-diffs-in-the-shell.md) | Show edit diffs in the shell | `medium` | `feat` | needs-grooming |
@@ -54,6 +55,7 @@ graph TD
   0148
   0149
   0150
+  0151
   0012:::done
   0052:::done
   0063:::done
