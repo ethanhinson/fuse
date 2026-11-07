@@ -103,13 +103,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
 	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run, also for a cli/ model's tool subprocess - a deliberate footgun)")
+	maxRunDuration := fs.Duration("max-run-duration", cfg.MaxRunDuration, "stop the run with a nonzero exit after this long, e.g. 30m (0 = no limit; default: max_run_duration from the home config)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *maxRunDuration < 0 {
+		fmt.Fprintf(stderr, "--max-run-duration must not be negative, got %s\n", *maxRunDuration)
 		return 2
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--max-run-duration D] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
@@ -212,9 +217,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	defer closeObs()
 
+	// Installed before MCP servers are dialed: a signal from here on goes through
+	// teardown, and everything started below has to be stopped by it.
+	stop := startRunStop(*maxRunDuration, stderr)
+	defer stop.finish()
+
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
 	rt := runtime.New(deps)
-	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
+	h, err := rt.StartLoop(stop.ctx, runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {
 		// StartLoop failed before the completion goroutine (which runs LoopTeardown) could
 		// launch, so close the one-shot MCP manager here or its dialed servers +
@@ -223,7 +233,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	if _, err := h.Wait(); err != nil {
+	_, err = h.Wait()
+	// Checked first: a stopped run is never a success, whatever the loop returned,
+	// and the reason was already printed when the stop happened.
+	if code := stop.finish(); code != 0 {
+		return code
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "run error: %v\n", err)
 		return 1
 	}

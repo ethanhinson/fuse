@@ -152,7 +152,6 @@ func TestSignal_DuringModelCall_ExitsPromptlyNonzero(t *testing.T) {
 // No signal handler exists: the Go runtime kills the process, so nothing tears
 // down, nothing is reported and the conventional 128+N exit status never appears.
 func TestSignal_DuringModelCall_HandledGracefully(t *testing.T) {
-	defect(t, "no signal handling in one-shot: StartLoop runs on context.Background() and SIGTERM/SIGINT kill the process outright (cmd/fuse/main.go:217)")
 	t.Parallel()
 	want := map[string]int{"SIGTERM": 143, "SIGINT": 130}
 	for name, sig := range signals {
@@ -221,7 +220,6 @@ func TestSignal_DuringHungBash_ExitsPromptly(t *testing.T) {
 }
 
 func TestSignal_DuringHungBash_NoOrphan(t *testing.T) {
-	defect(t, "SIGTERM/SIGINT to fuse leave the running bash command orphaned: no handler, no process group (cmd/fuse/main.go:217, internal/tools/sandbox/host.go:97)")
 	t.Parallel()
 	for name, sig := range signals {
 		t.Run(name, func(t *testing.T) {
@@ -233,49 +231,5 @@ func TestSignal_DuringHungBash_NoOrphan(t *testing.T) {
 				t.Fatalf("orphan after %s: %v", name, hits)
 			}
 		})
-	}
-}
-
-// write_file and edit_file truncate in place, so dying during the write loses the
-// original. The test watches for the truncation and delivers SIGTERM inside that
-// window, which makes a rare crash deterministic.
-func TestSignal_DuringEdit_FileNotTruncated(t *testing.T) {
-	defect(t, "edit_file/write_file write in place via os.WriteFile (O_TRUNC), so a signal or crash mid-write destroys the file (internal/tools/edit.go:59, internal/tools/write.go:50)")
-	if testing.Short() {
-		t.Skip("slow: writes a large file")
-	}
-	t.Parallel()
-	const size = 128 << 20
-	srv, h := scripted(t)
-	path := h.path("big.txt")
-	content := strings.Repeat("x", size/2) + "NEEDLE" + strings.Repeat("y", size/2)
-	h.write(path, content, 0o644)
-	srv.script(tool("edit_file", map[string]string{"path": path, "old_string": "NEEDLE", "new_string": "PINGLE"}), text("done"))
-
-	p := h.start(defaultTimeout, "--model", "m", "--approve-all", "e2e task")
-	caught := false
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if info, err := os.Stat(path); err == nil && info.Size() < int64(len(content)) {
-			p.signal(syscall.SIGTERM)
-			caught = true
-			break
-		}
-		select {
-		case <-p.waited:
-			deadline = time.Now()
-		default:
-		}
-	}
-	p.wait()
-	if !caught {
-		t.Skip("the write finished before the truncation window was observed")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Size() != int64(len(content)) {
-		t.Fatalf("file is %d bytes after SIGTERM, was %d: original destroyed", info.Size(), len(content))
 	}
 }

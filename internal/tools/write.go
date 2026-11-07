@@ -47,7 +47,7 @@ func (writeTool) Execute(ctx context.Context, args string) Result {
 	if err := os.MkdirAll(filepath.Dir(a.Path), 0o755); err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
-	if err := os.WriteFile(a.Path, []byte(a.Content), 0o644); err != nil {
+	if err := writeFileAtomic(a.Path, []byte(a.Content)); err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	lines := 1

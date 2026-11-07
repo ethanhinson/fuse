@@ -73,7 +73,26 @@ func terminalApproval(in io.Reader, out io.Writer) permissions.ApprovalFunc {
 			return false, false, err
 		}
 		fmt.Fprintf(out, "\nApprove tool call?\n  %s\n[y]es / [N]o / [a]lways for this session: ", req.Preview)
-		line, err := reader.ReadString('\n')
+		// The read happens off to the side because a blocked terminal read cannot be
+		// cancelled, and a signal must end a run that is sitting at this prompt.
+		type answer struct {
+			line string
+			err  error
+		}
+		answered := make(chan answer, 1)
+		go func() {
+			line, err := reader.ReadString('\n')
+			answered <- answer{line, err}
+		}()
+		var line string
+		var err error
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(out)
+			return false, false, ctx.Err()
+		case a := <-answered:
+			line, err = a.line, a.err
+		}
 		if err != nil && line == "" {
 			// EOF or read error with nothing typed ⇒ deny (fail closed).
 			fmt.Fprintln(out, "no")

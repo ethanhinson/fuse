@@ -247,7 +247,6 @@ func TestMCP_KilledOnModelFailureExit(t *testing.T) {
 }
 
 func TestMCP_NoOrphanAfterSignal(t *testing.T) {
-	defect(t, "SIGTERM skips LoopTeardown, so a stdio MCP server that doesn't exit on stdin EOF is orphaned (cmd/fuse/main.go:217; teardown only at cmd/fuse/runtime_binding.go:226)")
 	t.Parallel()
 	srv := newServer(t)
 	srv.route = func(*request) step { return srv.hang() }
@@ -265,7 +264,6 @@ func TestMCP_NoOrphanAfterSignal(t *testing.T) {
 // A launcher (npx, uvx, a shell script) forks the real server. stop() kills only
 // the launcher, so the real server survives a perfectly normal exit.
 func TestMCP_WrapperChild_NoOrphanOnNormalExit(t *testing.T) {
-	defect(t, "MCP stop() kills only the direct child with no process group, so a server behind a launcher that ignores EOF is orphaned (internal/mcp/client.go:146,293)")
 	t.Parallel()
 	srv, h := scripted(t)
 	pidFile := filepath.Join(t.TempDir(), "pid")

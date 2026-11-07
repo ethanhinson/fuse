@@ -24,7 +24,9 @@ func TestRepoSandboxFileCannotDisableContainment(t *testing.T) {
 
 	var warned bytes.Buffer
 	svc := newSandboxService(&warned)
-	if svc != nil && !svc.Contained() {
+	// With no container runtime nothing is selected and nothing runs, which also
+	// reads as not contained, so only an available substrate proves anything.
+	if svc != nil && svc.Available() && !svc.Contained() {
 		t.Fatal("a repository file disabled containment")
 	}
 	if !strings.Contains(warned.String(), "ignoring") || !strings.Contains(warned.String(), "sandbox.local.yml") {

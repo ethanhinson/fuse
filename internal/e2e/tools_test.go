@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -59,11 +58,11 @@ func TestRead_LongFile_WindowedWithFooter(t *testing.T) {
 }
 
 func TestRead_HugeFile_MemoryBounded(t *testing.T) {
-	defect(t, "read_file loads the whole file into memory even to return a window; no size guard (internal/archive/archive.go:92)")
 	if testing.Short() {
 		t.Skip("slow")
 	}
-	t.Parallel()
+	// Not parallel: on Linux a child starts with the peak RSS of the process that
+	// forked it, so a large parallel test would be charged to this one.
 	srv, h := scripted(t)
 	path := h.path("huge.dat")
 	f, err := os.Create(path)
@@ -387,11 +386,11 @@ func TestBash_HugeOutput_SpillsAndIsRecoverable(t *testing.T) {
 }
 
 func TestBash_HugeOutput_MemoryBounded(t *testing.T) {
-	defect(t, "bash buffers all output in memory via CombinedOutput with no cap; a noisy command can OOM the harness (internal/tools/sandbox/host.go:157)")
 	if testing.Short() {
 		t.Skip("slow")
 	}
-	t.Parallel()
+	// Not parallel: on Linux a child starts with the peak RSS of the process that
+	// forked it, so a large parallel test would be charged to this one.
 	srv, h := scripted(t)
 	h.hostSandbox()
 	srv.script(tool("bash", map[string]string{"command": `head -c 300000000 /dev/zero | tr '\0' x`}), text("done"))
@@ -404,9 +403,6 @@ func TestBash_HugeOutput_MemoryBounded(t *testing.T) {
 
 // A bare command: the shell execs into it, so killing the shell kills it.
 func TestBash_Forever_TimeoutSeconds_Simple(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		defect(t, "on Linux /bin/sh forks instead of execing, so the bash timeout kills only sh while its child holds the pipe")
-	}
 	t.Parallel()
 	srv, h := scripted(t)
 	h.hostSandbox()
@@ -438,7 +434,6 @@ func TestBash_Forever_ToolTimeoutBoundsRun(t *testing.T) {
 // A compound command's shell is killed but its child keeps the output pipe open,
 // so CombinedOutput blocks: the requested timeout isn't honored and the child lives.
 func TestBash_TimeoutSeconds_CompoundCommand_KillsChildrenPromptly(t *testing.T) {
-	defect(t, "bash timeout kills only /bin/sh: no process group, no WaitDelay, so a compound command blocks past timeout_seconds and its child is orphaned (internal/tools/sandbox/host.go:97,157)")
 	t.Parallel()
 	srv, h := scripted(t)
 	h.hostSandbox()
