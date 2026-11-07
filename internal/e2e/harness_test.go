@@ -32,6 +32,37 @@ var fuseBin string
 // selfBin is this test binary, re-execed as the fake MCP server.
 var selfBin string
 
+// toolPath is a directory of links to the system's tools, minus container runtimes.
+// Listing /usr/bin on PATH is not enough, because runtimes live there on Linux.
+var toolPath string
+
+func pathWithoutContainerRuntimes(dir string) (string, error) {
+	bin := filepath.Join(dir, "path")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		return "", err
+	}
+	skip := map[string]bool{"docker": true, "nerdctl": true, "podman": true}
+	for _, src := range []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"} {
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			link := filepath.Join(bin, e.Name())
+			if skip[e.Name()] {
+				continue
+			}
+			if _, err := os.Lstat(link); err == nil {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(src, e.Name()), link); err != nil {
+				return "", err
+			}
+		}
+	}
+	return bin, nil
+}
+
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(mcpModeEnv); mode != "" {
 		runMCPHelper(mode)
@@ -40,6 +71,11 @@ func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "fuse-e2e-bin-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if toolPath, err = pathWithoutContainerRuntimes(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.RemoveAll(dir)
 		os.Exit(1)
 	}
 	fuseBin = filepath.Join(dir, "fuse")
@@ -469,9 +505,9 @@ func (h *harness) outside() string {
 func (h *harness) environ() []string {
 	env := []string{
 		"HOME=" + h.home,
-		// /usr/local/bin deliberately absent: there is no docker on this PATH, so
-		// the default container substrate can never start a real container.
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+		// No container runtime on this PATH, so the default container substrate can
+		// never start a real container.
+		"PATH=" + toolPath,
 		"LANG=C.UTF-8",
 		"TMPDIR=" + h.t.TempDir(),
 	}
