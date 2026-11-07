@@ -29,6 +29,10 @@ type ModelConfig struct {
 	ContextWindow    int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
 	Persona          string `yaml:"persona"`
 	SystemPrefix     string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	// ReasoningEffort is sent as reasoning_effort on this model's agent calls:
+	// none, minimal, low, medium, high or xhigh. Empty sends nothing and leaves
+	// the provider's default. Providers differ in how they honour it.
+	ReasoningEffort string `yaml:"reasoning_effort,omitempty"`
 	// Operator display metadata advertised by GetCapabilities (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
 	// long-context; other strings pass through.

@@ -38,6 +38,9 @@ type Agent struct {
 	noProgressCalls int
 	finishCheck     bool
 	maxRunTokens    int64
+	// ReasoningEffort is sent on the agent's own model calls when set. The
+	// summarizer and classifier keep their own settings.
+	ReasoningEffort string
 
 	observer     observe.Observer
 	model        Completer

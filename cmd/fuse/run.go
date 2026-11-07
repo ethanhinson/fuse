@@ -490,6 +490,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a.SetOutputCeiling(mc.MaxTokensCeiling)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
+	a.ReasoningEffort = mc.ReasoningEffort
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
@@ -1150,6 +1151,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a.SetOutputCeiling(mc.MaxTokensCeiling)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
+	a.ReasoningEffort = mc.ReasoningEffort
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)

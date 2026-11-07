@@ -190,13 +190,14 @@ type wireTool struct {
 }
 
 type wireReq struct {
-	Model         string             `json:"model"`
-	Messages      []wireMessage      `json:"messages"`
-	Tools         []wireTool         `json:"tools,omitempty"`
-	MaxTokens     int                `json:"max_tokens,omitempty"`
-	ToolChoice    string             `json:"tool_choice,omitempty"`
-	Stream        bool               `json:"stream,omitempty"`
-	StreamOptions *wireStreamOptions `json:"stream_options,omitempty"`
+	Model           string             `json:"model"`
+	Messages        []wireMessage      `json:"messages"`
+	Tools           []wireTool         `json:"tools,omitempty"`
+	MaxTokens       int                `json:"max_tokens,omitempty"`
+	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
+	ToolChoice      string             `json:"tool_choice,omitempty"`
+	Stream          bool               `json:"stream,omitempty"`
+	StreamOptions   *wireStreamOptions `json:"stream_options,omitempty"`
 }
 
 // wireStreamOptions asks the gateway to include a final usage chunk in the
@@ -213,6 +214,20 @@ type wireUsage struct {
 	// OpenRouter). Omitted on the wire when nil so a buffered reply and a
 	// reassembled trace block stay comparable.
 	PromptTokensDetails *wirePromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	// CompletionTokensDetails carries the reasoning share of the output where the
+	// provider reports one.
+	CompletionTokensDetails *wireCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+}
+
+type wireCompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+func (u wireUsage) reasoningTokens() int {
+	if u.CompletionTokensDetails == nil {
+		return 0
+	}
+	return u.CompletionTokensDetails.ReasoningTokens
 }
 
 type wirePromptTokensDetails struct {
@@ -349,7 +364,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	// full attempt. We consume the SSE stream and return the assembled result,
 	// so Complete's signature and the agent loop are unchanged.
 	payload := wireReq{
-		Model: req.Model, MaxTokens: req.MaxTokens, ToolChoice: req.ToolChoice,
+		Model: req.Model, MaxTokens: req.MaxTokens, ToolChoice: req.ToolChoice, ReasoningEffort: req.ReasoningEffort,
 		Stream: true, StreamOptions: &wireStreamOptions{IncludeUsage: true},
 	}
 	for _, m := range req.Messages {
@@ -545,11 +560,12 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ Completion
 	}
 	msg := wr.Choices[0].Message
 	out := CompletionResp{
-		Content:      msg.Content,
-		InputTokens:  wr.Usage.PromptTokens,
-		CachedTokens: wr.Usage.cachedTokens(),
-		OutputTokens: wr.Usage.CompletionTokens,
-		FinishReason: wr.Choices[0].FinishReason,
+		Content:         msg.Content,
+		InputTokens:     wr.Usage.PromptTokens,
+		CachedTokens:    wr.Usage.cachedTokens(),
+		OutputTokens:    wr.Usage.CompletionTokens,
+		ReasoningTokens: wr.Usage.reasoningTokens(),
+		FinishReason:    wr.Choices[0].FinishReason,
 	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
@@ -642,11 +658,12 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	}
 
 	out := CompletionResp{
-		Content:      content.String(),
-		InputTokens:  usage.PromptTokens,
-		CachedTokens: usage.cachedTokens(),
-		OutputTokens: usage.CompletionTokens,
-		FinishReason: finishReason,
+		Content:         content.String(),
+		InputTokens:     usage.PromptTokens,
+		CachedTokens:    usage.cachedTokens(),
+		OutputTokens:    usage.CompletionTokens,
+		ReasoningTokens: usage.reasoningTokens(),
+		FinishReason:    finishReason,
 	}
 	sort.Ints(order)
 	for _, idx := range order {
@@ -678,6 +695,9 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 	wr.Usage = wireUsage{PromptTokens: out.InputTokens, CompletionTokens: out.OutputTokens}
 	if out.CachedTokens > 0 {
 		wr.Usage.PromptTokensDetails = &wirePromptTokensDetails{CachedTokens: out.CachedTokens}
+	}
+	if out.ReasoningTokens > 0 {
+		wr.Usage.CompletionTokensDetails = &wireCompletionTokensDetails{ReasoningTokens: out.ReasoningTokens}
 	}
 	if b, jerr := json.Marshal(wr); jerr == nil {
 		a.tracef(marker, prettyJSON(b))
