@@ -453,3 +453,249 @@ func TestAdmitConcurrentNeverExceedsCap(t *testing.T) {
 		t.Fatalf("pending[a] = %d after every release, want 0", p)
 	}
 }
+
+func TestSweepPrunesIdleTenantsOnceRefilled(t *testing.T) {
+	clk := newFakeClock()
+	counts := newFakeCounts()
+	l := mustNew(t, Config{Default: Limits{MaxLiveLoops: 5, StartsPerMinute: 2}}, counts.count, clk.Now)
+	ctx := context.Background()
+	// Three tenants hammer starts: each gets a bucket, a lock, and (while held)
+	// a pending reservation.
+	var held func()
+	for _, tenant := range []event.TenantID{"a", "b", "c"} {
+		release, err := l.Admit(ctx, tenant)
+		if err != nil {
+			t.Fatalf("%s: %v", tenant, err)
+		}
+		if tenant == "a" {
+			held = release // a keeps one reservation in flight across the sweep
+		} else {
+			release()
+		}
+	}
+	l.mu.Lock()
+	if len(l.buckets) != 3 || len(l.locks) != 3 {
+		l.mu.Unlock()
+		t.Fatalf("precondition: buckets=%d locks=%d, want 3/3", len(l.buckets), len(l.locks))
+	}
+	l.mu.Unlock()
+
+	// Not yet refilled: nothing may go.
+	if n := l.Sweep(clk.Now()); n != 0 {
+		t.Fatalf("Sweep before refill pruned %d, want 0", n)
+	}
+	l.mu.Lock()
+	if len(l.buckets) != 3 || len(l.locks) != 3 {
+		l.mu.Unlock()
+		t.Fatal("Sweep before refill dropped state")
+	}
+	l.mu.Unlock()
+
+	// After one full refill minute the two idle tenants go; a stays (held).
+	clk.Advance(time.Minute)
+	if n := l.Sweep(clk.Now()); n != 2 {
+		t.Fatalf("Sweep after refill pruned %d, want 2", n)
+	}
+	l.mu.Lock()
+	_, aHasBucket := l.buckets["a"]
+	_, aHasLock := l.locks["a"]
+	if len(l.buckets) != 1 || len(l.locks) != 1 {
+		l.mu.Unlock()
+		t.Fatalf("post-sweep maps = buckets %d, locks %d, want exactly tenant a left", len(l.buckets), len(l.locks))
+	}
+	l.mu.Unlock()
+	if !aHasBucket || !aHasLock {
+		t.Fatal("Sweep dropped the held tenant's state")
+	}
+	if l.pending["a"] != 1 {
+		t.Fatalf("pending[a] = %d, want 1 (a's start is still in flight)", l.pending["a"])
+	}
+
+	// Releasing a and sweeping again prunes the last tenant: the maps hit zero.
+	held()
+	clk.Advance(time.Minute)
+	if n := l.Sweep(clk.Now()); n != 1 {
+		t.Fatalf("Sweep after release pruned %d, want 1", n)
+	}
+	l.mu.Lock()
+	b := len(l.buckets)
+	k := len(l.locks)
+	l.mu.Unlock()
+	if b != 0 || k != 0 {
+		t.Fatalf("maps did not shrink to zero: buckets=%d locks=%d", b, k)
+	}
+}
+
+func TestSweepPrunesCapOnlyTenants(t *testing.T) {
+	// A cap with no start rate never allocates a bucket; the sweep must still
+	// reclaim its lock once no start is in flight.
+	counts := newFakeCounts()
+	l := mustNew(t, Config{Default: Limits{MaxLiveLoops: 1}}, counts.count, nil)
+	release, err := l.Admit(context.Background(), "a")
+	if err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	release()
+	if n := l.Sweep(time.Now()); n != 1 {
+		t.Fatalf("Sweep pruned %d, want 1 (the lock-only tenant)", n)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.buckets) != 0 || len(l.locks) != 0 {
+		t.Fatalf("maps not empty: buckets=%d locks=%d", len(l.buckets), len(l.locks))
+	}
+}
+
+func TestSweepKeepsDrainingBucket(t *testing.T) {
+	clk := newFakeClock()
+	l := mustNew(t, Config{Default: Limits{StartsPerMinute: 60}}, nil, clk.Now)
+	if _, err := l.Admit(context.Background(), "a"); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	clk.Advance(2 * time.Second) // refilled 2 of 1 spent: 60/60... spend 1, +2 tokens, capped at 60 => full
+	// 60/min => 1 token/sec; one spent, two elapsed: refilled to capacity.
+	if n := l.Sweep(clk.Now()); n != 1 {
+		t.Fatalf("Sweep pruned %d, want 1 (bucket refilled to capacity)", n)
+	}
+	// Partial refill must survive: spend most of a 3-burst and wait 1s.
+	l2 := mustNew(t, Config{Default: Limits{StartsPerMinute: 3}}, nil, clk.Now)
+	for i := 0; i < 3; i++ {
+		if _, err := l2.Admit(context.Background(), "x"); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+	}
+	clk.Advance(time.Second) // 0.05 tokens: nowhere near capacity
+	if n := l2.Sweep(clk.Now()); n != 0 {
+		t.Fatalf("Sweep pruned %d on a draining bucket, want 0", n)
+	}
+	l2.mu.Lock()
+	defer l2.mu.Unlock()
+	if len(l2.buckets) != 1 || len(l2.locks) != 0 {
+		t.Fatalf("draining tenant was dropped: buckets=%d locks=%d", len(l2.buckets), len(l2.locks))
+	}
+}
+
+func TestSweptTenantAdmitsWithFullBurst(t *testing.T) {
+	// Semantics are unchanged by the sweep: a swept tenant is a fresh tenant
+	// with a full bucket — the exact state refill reaches on its own.
+	clk := newFakeClock()
+	l := mustNew(t, Config{Default: Limits{MaxLiveLoops: 5, StartsPerMinute: 2}}, newFakeCounts().count, clk.Now)
+	ctx := context.Background()
+	if release, err := l.Admit(ctx, "a"); err != nil {
+		t.Fatalf("admit: %v", err)
+	} else {
+		release()
+	}
+	clk.Advance(time.Minute)
+	if n := l.Sweep(clk.Now()); n != 1 {
+		t.Fatalf("Sweep pruned %d, want 1", n)
+	}
+	for i := 0; i < 2; i++ {
+		release, err := l.Admit(ctx, "a")
+		if err != nil {
+			t.Fatalf("post-sweep start %d: %v", i, err)
+		}
+		release()
+	}
+	if _, err := l.Admit(ctx, "a"); err == nil {
+		t.Fatal("post-sweep third start admitted: the sweep granted extra burst")
+	}
+}
+
+func TestSweeperStopsOnContextDone(t *testing.T) {
+	// Cancel stops the sweeper: the goroutine's only exit is ctx, and a
+	// cancelled ctx must leave the maps untouched from then on (no sweep
+	// after cancel, no panic, no leaked sweep running the fake clock).
+	clk := newFakeClock()
+	l := mustNew(t, Config{Default: Limits{StartsPerMinute: 1}}, nil, clk.Now)
+	ctx, cancel := context.WithCancel(context.Background())
+	l.StartSweeper(ctx, time.Millisecond)
+	if _, err := l.Admit(ctx, "a"); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	clk.Advance(time.Minute)
+	cancel()
+	// Give a would-be stray tick every chance to land.
+	time.Sleep(5 * time.Millisecond)
+	l.mu.Lock()
+	n := len(l.buckets)
+	l.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("buckets after cancel = %d, want 1 (sweeper kept running)", n)
+	}
+
+	// A zero interval and a nil limiter start nothing at all.
+	l2 := mustNew(t, Config{Default: Limits{StartsPerMinute: 1}}, nil, clk.Now)
+	l2.StartSweeper(context.Background(), 0)
+	time.Sleep(5 * time.Millisecond)
+	if _, err := l2.Admit(context.Background(), "a"); err != nil {
+		t.Fatalf("admit after zero-interval sweeper: %v", err)
+	}
+	var nilL *Limiter
+	nilL.StartSweeper(context.Background(), time.Millisecond)
+}
+
+// TestSweepDuringAdmitWindowKeepsLock reproduces the review bug: a caller in
+// Admit's window between looking up its admission lock and acquiring it leaves
+// the tenant looking idle — the lock is unheld, pending is 0 — so Sweep
+// deleted the lock. The next Admit then built a second semaphore for the
+// tenant and both callers could be in the critical section at once, exceeding
+// the live-loop cap. Everything is channel-synchronized: no timing luck.
+func TestSweepDuringAdmitWindowKeepsLock(t *testing.T) {
+	// Cap only, no start rate: nothing but the admission lock protects the
+	// cap, which is exactly the case the review calls out.
+	clk := newFakeClock()
+	counts := newFakeCounts()
+	l := mustNew(t, Config{Default: Limits{MaxLiveLoops: 1}}, counts.count, clk.Now)
+
+	// Park the first caller inside Admit's lookup-to-acquire window; only the
+	// hook decides when it proceeds, so the interleaving is forced, not raced.
+	inWindow := make(chan struct{})
+	releaseWindow := make(chan struct{})
+	l.mu.Lock()
+	l.admitWindowHook = func() {
+		l.admitWindowHook = nil // one shot: only the first Admit parks
+		close(inWindow)
+		<-releaseWindow
+	}
+	l.mu.Unlock()
+	admitted1 := make(chan error, 1)
+	go func() {
+		rel, err := l.Admit(context.Background(), "a")
+		if err == nil {
+			rel()
+		}
+		admitted1 <- err
+	}()
+	<-inWindow
+
+	// While that caller sits in the window the tenant is idle by every signal
+	// Sweep had: no bucket, lock unheld, pending 0. The pre-fix Sweep pruned
+	// the lock here; with the fix it must report the waiter and prune nothing.
+	if n := l.Sweep(clk.Now()); n != 0 {
+		t.Fatalf("Sweep pruned %d tenants while an admit was in its window, want 0", n)
+	}
+
+	// Let the first caller proceed and finish; its admission must have held
+	// the one and only lock and counted against the cap.
+	close(releaseWindow)
+	if err := <-admitted1; err != nil {
+		t.Fatalf("first admit: %v", err)
+	}
+
+	// Now the tenant really is idle: the sweep after it must prune it.
+	if n := l.Sweep(clk.Now()); n != 1 {
+		t.Fatalf("post-release Sweep pruned %d tenants, want 1", n)
+	}
+
+	// The second start must still be refused at the cap by the original lock:
+	// with the bug, the mid-window sweep had deleted it, so this Admit created
+	// a second semaphore and admitted alongside the first caller.
+	counts.set("a", 1) // the first loop is now live in the registry
+	rel2, err := l.Admit(context.Background(), "a")
+	if err == nil {
+		rel2()
+		t.Fatal("second admit succeeded, want a cap refusal")
+	}
+	asRefused(t, err)
+}
