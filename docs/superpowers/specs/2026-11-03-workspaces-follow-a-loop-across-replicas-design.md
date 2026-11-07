@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0130 — Workspaces follow a loop across replicas](../../changes/active/0130-workspaces-follow-a-loop-across-replicas.md)**
+> ↩ **[Change 0130 — Workspaces follow a loop across replicas](../../changes/archive/2026-11-07-0130-workspaces-follow-a-loop-across-replicas.md)**
 <!-- docket:backlink:end -->
 
 # Workspaces follow a loop across replicas
