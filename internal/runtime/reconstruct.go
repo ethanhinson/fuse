@@ -117,6 +117,12 @@ func reconstructLoopState(events []event.Event, rootID string) (loopState, error
 				if err := json.Unmarshal(e.Payload, &p); err != nil {
 					return loopState{}, fmt.Errorf("reconstruct: model.call.end payload (seq %d): %w", e.Seq, err)
 				}
+				// A discarded reply never entered the live transcript. Streams from
+				// before that marker existed can still hold an empty cut-off reply,
+				// which is equally not a turn.
+				if p.Discarded || (p.FinishReason == "length" && p.Content == "" && len(p.ToolCalls) == 0) {
+					break // leaves this switch only: its tokens are still counted below
+				}
 				msg := model.Message{Role: "assistant", Content: p.Content}
 				for _, ref := range p.ToolCalls {
 					callIdx[ref.ID] = len(msg.ToolCalls)

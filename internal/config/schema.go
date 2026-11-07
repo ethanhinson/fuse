@@ -9,22 +9,26 @@ type Gateway struct {
 	URL string `yaml:"url"`
 	Key string `yaml:"key"`
 	// RequestTimeout bounds ONE gateway attempt (connect through the full
-	// streamed body) as a Go duration string ("5m", "20m"). Empty ⇒ the
-	// adapter's built-in 5m. Reasoning models served through OpenRouter can
-	// stream 30k–60k thinking tokens before their first visible byte, which
-	// overruns 5m and burns every retry; a per-deployment knob is the fix, not
-	// a bigger constant. Not a credential or permission surface, so it is
+	// streamed body) as a Go duration string ("5m", "20m"). Empty means no limit
+	// on total time for a local run and 30m on a hosted loop server, where nobody
+	// can cancel a call that never ends. Reasoning models can stream 30k–60k
+	// thinking tokens before their first visible byte, so a slow response is not
+	// a failure; a silent one ends through the adapter's idle timeout. Not a credential or permission surface, so it is
 	// honored from .fuse.local.yml as well (the worst case is a longer wait).
 	RequestTimeout string `yaml:"request_timeout"`
 }
 
 // ModelConfig is a single named model entry.
 type ModelConfig struct {
-	ID            string `yaml:"id"`
-	MaxTokens     int    `yaml:"max_tokens"`
-	ContextWindow int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
-	Persona       string `yaml:"persona"`
-	SystemPrefix  string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	ID        string `yaml:"id"`
+	MaxTokens int    `yaml:"max_tokens"`
+	// MaxTokensCeiling is the highest output cap a truncated reply may raise
+	// max_tokens to, since reasoning spends the same budget as the reply. 0 = four
+	// times max_tokens; set it equal to max_tokens to make max_tokens a hard limit.
+	MaxTokensCeiling int    `yaml:"max_tokens_ceiling"`
+	ContextWindow    int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
+	Persona          string `yaml:"persona"`
+	SystemPrefix     string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
 	// Operator display metadata advertised by GetCapabilities (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
 	// long-context; other strings pass through.
@@ -950,7 +954,7 @@ func Default() Config {
 			Summarization: SummarizationConfig{
 				Enabled:   true,
 				Threshold: 0.85,
-				MaxOutput: 2000,
+				MaxOutput: 8000,
 			},
 			// Relevance-aware pruning defaults on (change 0028). Heuristic-only
 			// (ClassifierModel empty); the recency floor keeps the newest half of
