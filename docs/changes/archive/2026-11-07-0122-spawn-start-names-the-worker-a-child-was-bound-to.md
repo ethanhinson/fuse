@@ -2,12 +2,12 @@
 id: 122
 slug: 'spawn-start-names-the-worker-a-child-was-bound-to'
 title: 'spawn.start names the worker a child was bound to'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [114, 115]
@@ -43,3 +43,7 @@ fuse's `spawn.start` event names the role a child was started as, but not the wo
 ## Out of scope
 
 Changing how workers are resolved.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
