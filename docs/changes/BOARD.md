@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 7 killed
+**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 22 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 8 killed
 
 ## 🟢 In progress (3)
 
@@ -19,7 +19,7 @@
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 | [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-the-blackboard-is-durable-and-shared-across-replicas-design.md) | build-ready |
 
-## 🟡 Proposed (23)
+## 🟡 Proposed (22)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -44,7 +44,6 @@
 | [0107](active/0107-evict-idle-per-tenant-limiter-buckets-and-admission-locks.md) | Evict idle per-tenant limiter buckets and admission locks | `low` | `fix` | needs-grooming |
 | [0106](active/0106-loop-registry-live-count-method-for-the-per-tenant-live-loop.md) | Loop registry live-count method for the per-tenant live-loop cap | `medium` | `feat` | needs-grooming |
 | [0105](active/0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | `medium` | `fix` | needs-grooming |
-| [0104](active/0104-server-aware-validateharness-on-the-loop-service.md) | Server-aware ValidateHarness on the loop service | `medium` | `feat` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -62,7 +61,6 @@ graph TD
   0063 --> 0074
   0081
   0083
-  0104
   0105
   0106
   0107
@@ -102,11 +100,12 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (110)</summary>
+<details><summary>✅🗑️ Archive — done + killed (111)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
+| [0104](archive/2026-11-07-0104-server-aware-validateharness-on-the-loop-service.md) | Server-aware ValidateHarness on the loop service | 2026-11-07 |
 | [0142](archive/2026-11-06-0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands: parse-layer decomposition with per-part deterministic evaluation | 2026-11-06 |
 | [0127](archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | 2026-11-05 |
 | [0141](archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | 2026-11-04 |
