@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**144 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0144](active/0144-write-file-refuses-to-overwrite-a-file-the-agent-has-not-rea.md) | write_file refuses to overwrite a file the agent has not read | `high` | `feat` | needs-grooming |
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn in the shell without ending the session | `low` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
@@ -40,6 +41,7 @@ graph TD
   0125
   0138
   0143
+  0144
   0012:::done
   0052:::done
   0063:::done
