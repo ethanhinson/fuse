@@ -45,15 +45,15 @@ func TestGatewayRequestTimeoutRejectsGarbage(t *testing.T) {
 	}
 }
 
-// The repo-local file may set it too: a timeout is neither a credential nor a
-// permission surface, and the worst case of a longer value is a longer wait.
-func TestGatewayRequestTimeoutFromLocalFile(t *testing.T) {
+// The repo-local file may not set it: a repo could otherwise stretch a hung request
+// for as long as it likes.
+func TestGatewayRequestTimeoutIgnoredFromLocalFile(t *testing.T) {
 	cwd := chdirTemp(t)
 	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte("gateway:\n  request_timeout: 15m\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c := loadHomeConfig(t, "gateway:\n  url: http://example:5000/v1\n")
-	if c.Gateway.RequestTimeout != "15m" {
-		t.Fatalf("request_timeout = %q, want 15m from .fuse.local.yml", c.Gateway.RequestTimeout)
+	c := loadHomeConfig(t, "gateway:\n  url: http://example:5000/v1\n  request_timeout: 5m\n")
+	if c.Gateway.RequestTimeout != "5m" {
+		t.Fatalf("request_timeout = %q, want the home file's 5m", c.Gateway.RequestTimeout)
 	}
 }
