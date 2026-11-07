@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0129 — Per-loop workspace adapter and confined file tools](../changes/active/0129-per-loop-workspace-adapter-and-confined-file-tools.md)**
+> ↩ **[Change 0129 — Per-loop workspace adapter and confined file tools](../changes/archive/2026-11-07-0129-per-loop-workspace-adapter-and-confined-file-tools.md)**
 <!-- docket:backlink:end -->
 
 # Build results — Change 0129

@@ -1,12 +1,11 @@
 # Backlog
 
-**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 30 killed
+**143 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 31 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0129](active/0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) | `feat/per-loop-workspace-adapter-and-confined-file-tools` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
 ## 🟣 Groomed (1)
@@ -41,17 +40,15 @@ graph TD
   0083
   0111
   0125
-  0128 --> 0129
   0138
   0143
   0012:::done
   0052:::done
   0063:::done
-  0128:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (133)</summary>
+<details><summary>✅🗑️ Archive — done + killed (134)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
@@ -65,6 +62,7 @@ graph TD
 | [0132](archive/2026-11-07-0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | 2026-11-07 |
 | [0131](archive/2026-11-07-0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | 2026-11-07 |
 | [0130](archive/2026-11-07-0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | 2026-11-07 |
+| [0129](archive/2026-11-07-0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | 2026-11-07 |
 | [0126](archive/2026-11-07-0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | 2026-11-07 |
 | [0124](archive/2026-11-07-0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | 2026-11-07 |
 | [0123](archive/2026-11-07-0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | 2026-11-07 |
