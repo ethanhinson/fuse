@@ -1,6 +1,6 @@
 # Backlog
 
-**142 changes** — 🟢 3 in progress · 🔵 1 built · 🟣 3 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 102 done · 🗑️ 7 killed
+**142 changes** — 🟢 3 in progress · 🟣 3 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 7 killed
 
 ## 🟢 In progress (3)
 
@@ -9,12 +9,6 @@
 | [0129](active/0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) | `feat/per-loop-workspace-adapter-and-confined-file-tools` | building |
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0134](active/0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | `medium` | `feat` | [#138](https://github.com/ethanhinson/fuse/pull/138) | awaiting merge |
 
 ## 🟣 Groomed (3)
 
@@ -89,7 +83,6 @@ graph TD
   0127 --> 0132
   0131 --> 0132
   0133
-  0134
   0135
   0126 --> 0136
   0128 --> 0137
@@ -107,10 +100,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (109)</summary>
+<details><summary>✅🗑️ Archive — done + killed (110)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
 | [0142](archive/2026-11-06-0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands: parse-layer decomposition with per-part deterministic evaluation | 2026-11-06 |
 | [0127](archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | 2026-11-05 |
 | [0141](archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | 2026-11-04 |
@@ -125,7 +119,6 @@ graph TD
 | [0103](archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | 2026-11-01 |
 | [0102](archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | 2026-11-01 |
 | [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
-| [0100](archive/2026-11-01-0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | 2026-11-01 |
 | [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
@@ -138,7 +131,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-11](archive/) | 1 done |
+| [2026-11](archive/) | 2 done |
 | [2026-10](archive/) | 14 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |

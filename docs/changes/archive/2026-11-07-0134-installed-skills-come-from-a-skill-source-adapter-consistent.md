@@ -2,12 +2,12 @@
 id: 134
 slug: 'installed-skills-come-from-a-skill-source-adapter-consistent'
 title: 'Installed skills come from a skill source adapter, consistent across replicas'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-06'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [86, 118, 128]
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md](../../superpowers/specs/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md) |
+| Spec (merged) | [2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md) |
 | Plan | [2026-11-05-installed-skills-come-from-a-skill-source-adapter-consistent-plan.md](../../superpowers/plans/2026-11-05-installed-skills-come-from-a-skill-source-adapter-consistent-plan.md) |
 | Results | [2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-results.md](../../results/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-results.md) |
 <!-- docket:artifacts:end -->

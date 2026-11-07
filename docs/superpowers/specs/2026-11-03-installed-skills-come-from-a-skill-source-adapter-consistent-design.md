@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0134 — Installed skills come from a skill source adapter, consistent across replicas](../../changes/active/0134-installed-skills-come-from-a-skill-source-adapter-consistent.md)**
+> ↩ **[Change 0134 — Installed skills come from a skill source adapter, consistent across replicas](../../changes/archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md)**
 <!-- docket:backlink:end -->
 
 # Installed skills come from a skill source adapter, consistent across replicas
