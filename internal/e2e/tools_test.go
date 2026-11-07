@@ -343,7 +343,9 @@ func TestEditWrite_FileModePreserved(t *testing.T) {
 				if tn == "edit_file" {
 					args = map[string]string{"path": path, "old_string": "old", "new_string": "new"}
 				}
-				runOneTool(t, srv, h, tn, args, "--approve-all")
+				// Read first, as write_file requires before overwriting.
+				srv.script(tool("read_file", map[string]string{"path": path}), tool(tn, args), text("done"))
+				wantCode(t, h.run("--approve-all"), 0)
 				info, err := os.Stat(path)
 				if err != nil {
 					t.Fatal(err)
