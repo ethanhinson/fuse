@@ -56,7 +56,12 @@ func TestSafeListAutoApproves(t *testing.T) {
 		return false, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "smart"}
-	g := New(cfg, newTestRegistry("read_file", "list_directory", "codeindex_callers"), Human(approve))
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	g := New(cfg, newTestRegistry("read_file", "list_directory", "codeindex_callers"), Human(approve), WithWorkspaceRoot(root))
 
 	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
 		res := g.Execute(context.Background(), name, `{}`)

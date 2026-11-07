@@ -119,7 +119,6 @@ func TestWrite_OutsideWorkspace_AllowedWithApproveAll_Documented(t *testing.T) {
 // does. The safe-list comment deliberately treats read tools as inert, but says
 // nothing about scope; see the report.
 func TestRead_OutsideWorkspace_RequiresApproval(t *testing.T) {
-	defect(t, "read_file/grep/list_directory are safe-listed with no path scope: any path, symlink, or ~/.fuse/config.yml is read with no approval on a headless run (internal/permissions/policy.go:77, gate.go:613)")
 	t.Parallel()
 	const secret = "OUTSIDE-SECRET-CONTENT"
 	cases := map[string]func(h *harness) (string, any){
@@ -164,7 +163,6 @@ func TestRead_OutsideWorkspace_RequiresApproval(t *testing.T) {
 
 // The escape that matters most: the gateway key, on a run with no approver.
 func TestRead_GatewayKeyFromConfig_RequiresApproval(t *testing.T) {
-	defect(t, "read_file of ~/.fuse/config.yml is auto-approved, so a prompt-injected model reads the gateway key into its context and the trace (internal/permissions/policy.go:77)")
 	t.Parallel()
 	srv, h := scripted(t)
 	trace := filepath.Join(t.TempDir(), "trace")
@@ -252,7 +250,6 @@ func TestAutoMode_WriteEscapes_NotAutoApproved(t *testing.T) {
 }
 
 func TestAutoMode_DanglingSymlink_NotAutoApproved(t *testing.T) {
-	defect(t, "auto-mode scope misjudges a dangling symlink as in-workspace: EvalSymlinks fails, the leaf is re-appended, and write_file follows the link out (internal/permissions/heuristics.go:764-781)")
 	t.Parallel()
 	srv, h := scripted(t)
 	h.extra = "permissions:\n  mode: auto\n"

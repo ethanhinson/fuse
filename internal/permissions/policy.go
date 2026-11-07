@@ -68,8 +68,9 @@ type ToolPolicy struct {
 	DenyLayer string
 }
 
-// safeList is the baseline set of built-in tools that always auto-approve in
-// smart and auto mode: the read-only tools, plus spawn_agent — harness-internal
+// safeList is the baseline set of built-in tools that auto-approve in smart and
+// auto mode: the read-only tools (within the allowed roots, see readScopeAllowed),
+// plus spawn_agent — harness-internal
 // orchestration whose spawned child inherits a cloned gate (same mode, rules,
 // classifier), so every action the child takes is independently gated and the
 // spawn call itself is inert.

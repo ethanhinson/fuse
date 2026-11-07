@@ -610,7 +610,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 			switch {
 			case !demoted:
 				// auto_approve config patterns promote beyond the safe list.
-				if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || onSafeList(name) {
+				if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || (onSafeList(name) && readScopeAllowed(name, args, g.allowedRoots())) {
 					g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 					policy.AutoApprove = true
 					return policy, nil
@@ -748,6 +748,9 @@ func explicitAskReason(pat string, policy bool) string {
 func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string, cls *ClassifierCall, segs []SegmentVerdict) {
 	if name != "bash" {
 		if onSafeList(name) {
+			if !readScopeAllowed(name, args, g.allowedRoots()) {
+				return VerdictAsk, LayerReadScope, "", nil, nil
+			}
 			return VerdictAllow, LayerSafelist, "", nil, nil
 		}
 		// Edit tools carry a single "path" arg rather than a shell command: scope it
