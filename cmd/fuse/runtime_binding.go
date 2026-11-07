@@ -237,7 +237,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// child-builder/spawner closures above emit onto THIS loop's store (change
 			// 0046). One-shot is single-loop-per-process; the holder is instance state.
 			storeHolder.set(store)
-			a, _, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, cfg.Instructions, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
+			a, _, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, rootInstructions(cfg, os.Stderr), traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
 			if err != nil {
 				return nil, err
 			}

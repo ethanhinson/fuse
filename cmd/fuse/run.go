@@ -335,6 +335,25 @@ func applyToolTimeout(a *agent.Agent, cfg config.Config) {
 	}
 }
 
+// rootInstructions composes the root agent's instructions: cfg.Instructions
+// plus, appended once at startup, the AGENTS.md project-instructions block
+// (agentsmd.go). Children never receive cfg.Instructions, so they never see
+// the block; computing it here keeps the root's prompt prefix stable across
+// turns. cwd comes from the process (the feature is inherently cwd-scoped);
+// the composed function itself is tested directly with explicit paths.
+func rootInstructions(cfg config.Config, stderr io.Writer) string {
+	ins := cfg.Instructions
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ins
+	}
+	home, herr := os.UserHomeDir()
+	if herr != nil {
+		home = ""
+	}
+	return ins + agentsMDInstructions(cwd, home, stderr)
+}
+
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
