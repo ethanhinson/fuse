@@ -54,6 +54,15 @@ func (p *runProgress) recordCalls(results []toolResult) int64 {
 	return p.callsSinceChange.Add(int64(len(results)))
 }
 
+// maxEmptyReplies is how many consecutive empty replies a run will ask past.
+const maxEmptyReplies = 2
+
+// emptyReplyPrompt follows a reply with no text and no tool call.
+const emptyReplyPrompt = "[empty-reply] Your last reply was empty. Continue the task now: make the next tool call, or if the work is finished, give your final answer as text."
+
+// ErrEmptyReply ends a run whose model keeps replying with nothing.
+var ErrEmptyReply = errors.New("agent: the model returned empty replies and no tool calls")
+
 // finishCheckPrompt is sent once when a headless run first replies with no tool call.
 const finishCheckPrompt = "[finish-check] Your last reply had no tool call, which ends this run. " +
 	"If any work remains, including anything you just said you would do, continue now with a tool call. " +
