@@ -34,3 +34,8 @@ ANALYSIS.md
 .codex/agents/docket-*.toml
 .cursor/rules/docket-dispatch.mdc
 # docket:end
+
+# Terminal-Bench runs
+evals/terminalbench/jobs/
+evals/terminalbench/.venv/
+__pycache__/
