@@ -2,12 +2,12 @@
 id: 124
 slug: 'the-expects-hint-composes-with-role-and-tool-less-prompts'
 title: 'The expects hint composes with role and tool-less prompts'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [114, 116]
@@ -46,3 +46,7 @@ When a spawn passes `expects`, the return_result hint is written into the child'
 ## Out of scope
 
 Changing return_result itself.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
