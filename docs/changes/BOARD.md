@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 31 killed
+**143 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
@@ -14,14 +14,13 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
-| [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
 
@@ -37,7 +36,6 @@ graph TD
   0052 --> 0057
   0063 --> 0074
   0081
-  0083
   0111
   0125
   0138
@@ -48,7 +46,7 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (134)</summary>
+<details><summary>✅🗑️ Archive — done + killed (135)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
@@ -77,6 +75,7 @@ graph TD
 | [0106](archive/2026-11-07-0106-loop-registry-live-count-method-for-the-per-tenant-live-loop.md) | Loop registry live-count method for the per-tenant live-loop cap | 2026-11-07 |
 | [0105](archive/2026-11-07-0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | 2026-11-07 |
 | [0104](archive/2026-11-07-0104-server-aware-validateharness-on-the-loop-service.md) | Server-aware ValidateHarness on the loop service | 2026-11-07 |
+| [0083](archive/2026-11-07-0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | 2026-11-07 |
 | [0142](archive/2026-11-06-0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands: parse-layer decomposition with per-part deterministic evaluation | 2026-11-06 |
 | [0127](archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | 2026-11-05 |
 | [0141](archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | 2026-11-04 |

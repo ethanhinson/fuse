@@ -2,11 +2,11 @@
 id: 83
 slug: fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol
 title: 'Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests'
-status: proposed
+status: 'killed'
 priority: medium
 type: fix
 created: 2026-09-17
-updated: 2026-09-17
+updated: '2026-11-07'
 depends_on: []
 related: []
 discovered_from: [75]
@@ -49,3 +49,7 @@ A flake in a job that gates every PR erodes the gate: people learn to rerun inst
 ## Open questions
 
 - Is the park event legitimately allowed to precede the turn span's end? If yes the test is wrong; if no the runtime is.
+
+## Why killed
+
+Both flaky tests were deleted with the server tier in PR #149 (internal/runtime is now one file with no turn-span or Send tests).
