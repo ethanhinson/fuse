@@ -2,12 +2,12 @@
 id: 135
 slug: 'mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope'
 title: 'MCP OAuth tokens live in a token store adapter and never open a browser on a server'
-status: 'proposed'
+status: 'killed'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [89, 105]
@@ -44,3 +44,7 @@ A `TokenStore` interface with the file implementation and a Postgres implementat
 ## Out of scope
 
 OAuth for spec-defined MCP servers (still refused); dynamic client registration changes beyond storing the result in the store.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.

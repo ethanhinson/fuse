@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0135 — MCP OAuth tokens live in a token store adapter and never open a browser on a server](../../changes/active/0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md)**
+> ↩ **[Change 0135 — MCP OAuth tokens live in a token store adapter and never open a browser on a server](../../changes/archive/2026-11-07-0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md)**
 <!-- docket:backlink:end -->
 
 # MCP OAuth tokens live in a token store adapter and never open a browser on a server

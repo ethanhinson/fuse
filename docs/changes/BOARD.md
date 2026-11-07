@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 2 in progress · 🟣 2 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 23 killed
+**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 24 killed
 
 ## 🟢 In progress (2)
 
@@ -9,12 +9,11 @@
 | [0129](active/0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) | `feat/per-loop-workspace-adapter-and-confined-file-tools` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (1)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
-| [0135](active/0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md) | build-ready |
 
 ## 🟡 Proposed (10)
 
@@ -51,7 +50,6 @@ graph TD
   0123
   0125
   0128 --> 0129
-  0135
   0126 --> 0136
   0128 --> 0137
   0129 --> 0137
@@ -68,10 +66,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (126)</summary>
+<details><summary>✅🗑️ Archive — done + killed (127)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0135](archive/2026-11-07-0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | 2026-11-07 |
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
 | [0133](archive/2026-11-07-0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | 2026-11-07 |
 | [0132](archive/2026-11-07-0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | 2026-11-07 |
