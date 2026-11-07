@@ -15,6 +15,7 @@ const (
 	LayerHeuristic   = "heuristic"    // egress boundary / workspace path scoping
 	LayerClassifier  = "classifier"   // LLM classifier verdict
 	LayerFetchFloor  = "fetch_floor"  // web_fetch static host floor (SSRF/blocklist/config)
+	LayerReadScope   = "read_scope"   // read_file/grep/list_directory path scoping
 	LayerEditScope   = "edit_scope"   // write_file/edit_file workspace path scoping
 	LayerValve       = "valve"        // escalation-valve pause
 	LayerHuman       = "human"        // the gate's approver answered (a person, or a policy stand-in)
