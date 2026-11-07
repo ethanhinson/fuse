@@ -2,12 +2,12 @@
 id: 105
 slug: 'pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl'
 title: 'Pin spec MCP server dials to the addresses checked at StartLoop'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [101]
@@ -44,3 +44,7 @@ The private-network deny resolves a spec MCP host once at StartLoop, but the MCP
 
 - Operator-configured MCP servers.
 - Built-in web tools egress.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared server. Guards spec-defined MCP servers; harness specs were removed.
