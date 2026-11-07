@@ -52,6 +52,21 @@ type CompletionResp struct {
 	FinishReason string
 }
 
+// Truncated reports whether the reply was cut at its output cap. limit is the
+// max_tokens the request sent. A gateway that reports no finish_reason is only
+// judged truncated when the cap was spent and nothing came back: output tokens
+// alone cannot decide it, because a subprocess-backed model does not honor the cap
+// and can legitimately report more.
+func (r CompletionResp) Truncated(limit int) bool {
+	switch r.FinishReason {
+	case "length", "max_tokens":
+		return true
+	case "":
+		return limit > 0 && r.OutputTokens >= limit && r.Content == "" && len(r.ToolCalls) == 0
+	}
+	return false
+}
+
 // AsMessage converts the response into an assistant Message for appending to
 // the running conversation. A tool call whose arguments are not valid JSON is
 // still executed as the model sent it (the registry answers "bad arguments"

@@ -414,6 +414,9 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 	if len(cfg.SkillPaths) > 0 {
 		omit("skill_paths", "host directories; a harness spec references skills by name (skills)")
 	}
+	if !reflect.DeepEqual(cfg.Skills, def.Skills) {
+		omit("skills", reasonOperator)
+	}
 	if !reflect.DeepEqual(cfg.LoopServer, def.LoopServer) {
 		omit("loop_server", reasonOperator)
 	}

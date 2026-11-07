@@ -53,6 +53,7 @@ func TestClassifierTruncationIsAttributed(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{
 		Content:      "",
 		OutputTokens: classifierMaxTokens,
+		FinishReason: "length",
 	}}
 	c := newTestClassifier(t, stub)
 

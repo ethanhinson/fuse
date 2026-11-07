@@ -25,6 +25,10 @@ type stubBackend struct {
 	obsCh        <-chan Event
 	obsUnsub     func()
 	obsErr       error
+	sawCancelID  LoopID
+	sawCancelWhy string
+	cancelRes    CancelResult
+	cancelErr    error
 }
 
 func (s *stubBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error) {
@@ -40,6 +44,11 @@ func (s *stubBackend) send(ctx context.Context, id LoopID, input string, opts Se
 func (s *stubBackend) observe(ctx context.Context, id LoopID, from Seq) (<-chan Event, func(), error) {
 	s.sawObsID, s.sawObsFrom = id, from
 	return s.obsCh, s.obsUnsub, s.obsErr
+}
+
+func (s *stubBackend) cancel(ctx context.Context, id LoopID, reason string) (CancelResult, error) {
+	s.sawCancelID, s.sawCancelWhy = id, reason
+	return s.cancelRes, s.cancelErr
 }
 
 func (s *stubBackend) capabilities(context.Context) (Capabilities, error) {
@@ -107,11 +116,12 @@ func TestClientPropagatesErrors(t *testing.T) {
 	}
 }
 
-// TestIsCompletionFiresOnParked pins the completion predicate to the real kind.
+// TestIsCompletionFiresOnParked pins the completion predicate to the real kinds.
 func TestIsCompletionFiresOnParked(t *testing.T) {
-	parked := Event{Kind: event.KindLoopParked}
-	if !IsCompletion(parked) {
-		t.Fatal("IsCompletion(loop.parked) = false, want true")
+	for _, k := range []Kind{event.KindLoopParked, event.KindLoopCancelled} {
+		if !IsCompletion(Event{Kind: k}) {
+			t.Fatalf("IsCompletion(%s) = false, want true", k)
+		}
 	}
 	for _, k := range []Kind{event.KindTurnStart, event.KindTurnEnd, event.KindModelCallEnd} {
 		if IsCompletion(Event{Kind: k}) {

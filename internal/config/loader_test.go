@@ -1383,7 +1383,7 @@ func TestLoadContextSummarizationFull(t *testing.T) {
 		t.Errorf("Threshold = %v, want 0.85", s.Threshold)
 	}
 	if s.MaxOutput != 2000 {
-		t.Errorf("MaxOutput = %d, want 2000", s.MaxOutput)
+		t.Errorf("MaxOutput = %d, want 8000", s.MaxOutput)
 	}
 }
 
@@ -1400,8 +1400,8 @@ func TestLoadContextSummarizationAbsentDefaults(t *testing.T) {
 	if s.Threshold != 0.85 {
 		t.Errorf("Threshold = %v, want 0.85 (default)", s.Threshold)
 	}
-	if s.MaxOutput != 2000 {
-		t.Errorf("MaxOutput = %d, want 2000 (default)", s.MaxOutput)
+	if s.MaxOutput != 8000 {
+		t.Errorf("MaxOutput = %d, want 8000 (default)", s.MaxOutput)
 	}
 }
 
@@ -1414,8 +1414,8 @@ func TestLoadContextSummarizationDisabled(t *testing.T) {
 	if c.Context.Summarization.Threshold != 0.85 {
 		t.Errorf("Threshold = %v, want 0.85 (default retained)", c.Context.Summarization.Threshold)
 	}
-	if c.Context.Summarization.MaxOutput != 2000 {
-		t.Errorf("MaxOutput = %d, want 2000 (default retained)", c.Context.Summarization.MaxOutput)
+	if c.Context.Summarization.MaxOutput != 8000 {
+		t.Errorf("MaxOutput = %d, want 8000 (default retained)", c.Context.Summarization.MaxOutput)
 	}
 }
 
@@ -1432,16 +1432,16 @@ func TestLoadContextSummarizationOnlyModel(t *testing.T) {
 	if s.Threshold != 0.85 {
 		t.Errorf("Threshold = %v, want 0.85 (default retained)", s.Threshold)
 	}
-	if s.MaxOutput != 2000 {
-		t.Errorf("MaxOutput = %d, want 2000 (default retained)", s.MaxOutput)
+	if s.MaxOutput != 8000 {
+		t.Errorf("MaxOutput = %d, want 8000 (default retained)", s.MaxOutput)
 	}
 }
 
 func TestDefaultContextSummarizationOn(t *testing.T) {
 	// Default() (no file at all) also yields Tier 2 on with defaults.
 	s := Default().Context.Summarization
-	if !s.Enabled || s.Threshold != 0.85 || s.MaxOutput != 2000 {
-		t.Errorf("Default context.summarization = %+v, want {Enabled:true Threshold:0.85 MaxOutput:2000}", s)
+	if !s.Enabled || s.Threshold != 0.85 || s.MaxOutput != 8000 {
+		t.Errorf("Default context.summarization = %+v, want {Enabled:true Threshold:0.85 MaxOutput:8000}", s)
 	}
 }
 

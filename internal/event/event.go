@@ -344,6 +344,10 @@ type ModelCallEndPayload struct {
 	// FinishReason is the gateway's finish_reason for the reply ("stop",
 	// "length", ...); "length" marks a reply cut at the output cap.
 	FinishReason string `json:"finish_reason,omitempty"`
+	// Discarded marks a reply the loop threw away because it was cut off and
+	// unusable. Its tokens still count, but it never enters the transcript, so a
+	// resume must not fold it back in.
+	Discarded bool `json:"discarded,omitempty"`
 }
 
 // ModelDeltaPayload carries one incremental token chunk (Stage B).
@@ -443,10 +447,15 @@ type LoopParkedPayload struct {
 // for people and tools reading the stream. It names secrets but never holds
 // their values. It does include the bodies of any skills the spec carries (at
 // most 262144 bytes in total, change 0118).
+//
+// InstalledSkillsDigest (change 0134) is the digest of the server's installed
+// skill set at the moment the loop started; a resume on a replica whose set
+// differs logs skills_drift (non-fatal).
 type LoopHarnessPayload struct {
-	Spec      json.RawMessage `json:"spec"`
-	SpecBytes []byte          `json:"spec_bytes"`
-	Digest    string          `json:"digest"`
+	Spec                  json.RawMessage `json:"spec"`
+	SpecBytes             []byte          `json:"spec_bytes"`
+	Digest                string          `json:"digest"`
+	InstalledSkillsDigest string          `json:"installed_skills_digest,omitempty"`
 }
 
 // MCPServerPayload accompanies KindMCPServer. Tools are the tool names exposed

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -556,5 +557,100 @@ func TestListModelsNonOKIsError(t *testing.T) {
 	defer srv.Close()
 	if _, err := NewAdapter(srv.URL, "k", srv.Client()).ListModels(context.Background()); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+// A slow stream is not a stalled one. Many small chunks take far longer than the
+// idle limit in total, and the call must still succeed on its first attempt.
+func TestStreamIdleTimeoutAllowsSlowStreams(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 6; i++ {
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+			w.(http.Flusher).Flush()
+			time.Sleep(40 * time.Millisecond)
+		}
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.StreamIdleTimeout = 150 * time.Millisecond
+	a.RetryBackoff = 0
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err != nil {
+		t.Fatalf("slow stream failed: %v", err)
+	}
+	if resp.Content != "xxxxxx" || calls.Load() != 1 {
+		t.Errorf("content = %q, calls = %d", resp.Content, calls.Load())
+	}
+}
+
+// A stream that goes silent ends long before the request timeout, is retried, and
+// the error says what happened.
+func TestStreamIdleTimeoutEndsAStalledStream(t *testing.T) {
+	var calls atomic.Int32
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(block)
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.StreamIdleTimeout = 50 * time.Millisecond
+	a.MaxAttempts = 2
+	a.RetryBackoff = 0
+	start := time.Now()
+	_, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err == nil || !strings.Contains(err.Error(), "silent") {
+		t.Fatalf("err = %v, want a silent-stream error", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("took %v; the request timeout was reached instead of the idle limit", elapsed)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want a retry", calls.Load())
+	}
+}
+
+// A model turn has no default limit on total time, and only silence ends it.
+func TestAdapterDefaultsHaveNoTotalLimit(t *testing.T) {
+	a := NewAdapter("http://x", "k", nil)
+	if a.RequestTimeout != 0 {
+		t.Errorf("RequestTimeout = %v, want no default limit", a.RequestTimeout)
+	}
+	if a.StreamIdleTimeout <= 0 {
+		t.Errorf("StreamIdleTimeout = %v, want a silence limit", a.StreamIdleTimeout)
+	}
+}
+
+// A slow response must outlive the old limits when none is set, and silence must
+// also end a gateway that ignored stream and answers with one buffered body.
+func TestIdleTimeoutCoversBufferedResponses(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "{")
+		w.(http.Flusher).Flush()
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(block)
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.StreamIdleTimeout = 50 * time.Millisecond
+	a.MaxAttempts = 1
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err == nil || !strings.Contains(err.Error(), "silent") {
+		t.Fatalf("err = %v, want a silent-response error", err)
 	}
 }

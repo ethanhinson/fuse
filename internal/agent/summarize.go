@@ -15,6 +15,12 @@ import (
 // typical context window so the summarizer call itself never overflows.
 const summarizerInputBudgetTokens = 96_000
 
+// summarizerRetryFactor is how much larger the one retry of a cut-off summary is.
+const summarizerRetryFactor = 4
+
+// summaryTruncatedNote ends a summary that was cut off even after the retry.
+const summaryTruncatedNote = "[summary cut off at the output cap — later sections may be missing]"
+
 // ladderRung reports which input-ladder rung produced a summary, for tests and
 // diagnostics.
 type ladderRung int
@@ -137,9 +143,25 @@ func (s *summarizer) summarizeWithRung(ctx context.Context, region []model.Messa
 	if err != nil {
 		return "", false, rung
 	}
+	// The cap also pays for reasoning, so a reasoning model can spend all of it
+	// before writing a word. Give a cut-off summary one larger attempt.
+	if resp.Truncated(req.MaxTokens) && s.maxOutput > 0 {
+		req.MaxTokens = s.maxOutput * summarizerRetryFactor
+		retryCtx, retrySpan := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: s.modelID}}})
+		retried, rerr := s.completer.Complete(retryCtx, req)
+		retrySpan.End(modelOutcome(rerr))
+		if rerr == nil && (strings.TrimSpace(retried.Content) != "" || strings.TrimSpace(resp.Content) == "") {
+			resp = retried
+		}
+	}
 	out := strings.TrimSpace(resp.Content)
 	if out == "" {
 		return "", false, rung
+	}
+	// A partial summary still beats stubbing the region with none, but the reader
+	// has to know the later sections may be missing.
+	if resp.Truncated(req.MaxTokens) {
+		out += "\n" + summaryTruncatedNote
 	}
 	return out, true, rung
 }
