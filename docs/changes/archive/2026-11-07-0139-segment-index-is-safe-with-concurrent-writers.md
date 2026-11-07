@@ -2,12 +2,12 @@
 id: 139
 slug: 'segment-index-is-safe-with-concurrent-writers'
 title: 'Segment index is safe with concurrent writers'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [128, 126]
@@ -42,3 +42,7 @@ The compaction segment index assumes one writer per loop. If two replicas archiv
 ## Out of scope
 
 Changing segment format.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only arises with multiple replicas writing one loop.
