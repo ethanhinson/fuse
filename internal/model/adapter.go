@@ -684,13 +684,61 @@ func (a *Adapter) recoverToolCalls(out CompletionResp, tools []ToolSchema) Compl
 	return out
 }
 
+// Bounds for the runaway-reply watchdog in readStream. A model can get stuck
+// emitting one short unit over and over until the output cap, and nothing else
+// notices: the reply keeps arriving (no idle timeout) and finishes "cleanly".
+const (
+	// repeatMinTailBytes is how much of the reply's tail must be one repeated
+	// unit before it counts as degenerate. Below it, ordinary repetitive
+	// prose, markdown tables, and numbered lists stay safe.
+	repeatMinTailBytes = 2048
+	// repeatMaxUnitBytes caps the repeated unit. Longer units are
+	// indistinguishable from structured prose at this cost, so they are not
+	// watched.
+	repeatMaxUnitBytes = 256
+	// repeatCheckStride is how much new visible text must arrive before the
+	// check re-runs, so a long healthy reply pays a bounded scan per KB of
+	// content, not per chunk.
+	repeatCheckStride = 1024
+)
+
+// repeatsAtTail reports whether s ends in degenerate repetition: its last
+// repeatMinTailBytes are one short unit (1..repeatMaxUnitBytes bytes) repeated
+// back to back. Only the tail is examined — a reply may open with normal prose
+// and then run away, so the head is irrelevant. Near-misses (a table whose
+// rows share a shape, a numbered list, log lines differing by timestamp) are
+// not pure repeats and return false.
+func repeatsAtTail(s string) bool {
+	n := len(s)
+	if n < repeatMinTailBytes+2 {
+		return false
+	}
+	maxU := repeatMaxUnitBytes
+	if n-repeatMinTailBytes < maxU {
+		maxU = n - repeatMinTailBytes
+	}
+	for u := 1; u <= maxU; u++ {
+		// A period-u tail means s[i] == s[i-u] for every i in the region.
+		run := 0
+		for i := n - 1; i >= u && s[i] == s[i-u]; i-- {
+			run++
+		}
+		if run >= repeatMinTailBytes {
+			return true
+		}
+	}
+	return false
+}
+
 // readStream consumes an SSE chat-completion stream and reassembles it into a
 // single CompletionResp: content deltas are concatenated, tool-call fragments
 // are merged by index (first fragment carries id+name, later ones append
 // arguments), and the trailing usage chunk supplies token counts. A read error
 // mid-stream is retryable (the generation may simply have dropped); a streamed
 // `error` event is retryable unless it reports a client-side rejection (see
-// retryableStreamError).
+// retryableStreamError). A reply degenerating into repetition is cut off early
+// and retried: returning here unwinds completeOnce, whose deferred cancel
+// aborts the request so the provider stops generating.
 func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
 	var content strings.Builder
 	byIndex := map[int]*ToolCall{}
@@ -698,6 +746,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	var finishReason string
 	var usage wireUsage
 	sawDone := false
+	nextRepeatCheck := repeatMinTailBytes + 2
 
 	sc := bufio.NewScanner(body)
 	// Allow long SSE lines (a single delta can carry a large tool-call arg).
@@ -732,6 +781,16 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		}
 		d := chunk.Choices[0].Delta
 		content.WriteString(d.Content)
+		// Watch only the visible reply for degenerate repetition: tool-call
+		// arguments can legitimately hold a repetitive file, and reasoning is
+		// not shown to the caller, so neither is checked.
+		if d.Content != "" && content.Len() >= nextRepeatCheck {
+			nextRepeatCheck = content.Len() + repeatCheckStride
+			if repeatsAtTail(content.String()) {
+				return CompletionResp{}, fmt.Errorf(
+					"model reply degenerated into repetition after %d bytes of content", content.Len()), true
+			}
+		}
 		for _, tc := range d.ToolCalls {
 			cur, ok := byIndex[tc.Index]
 			if !ok {
