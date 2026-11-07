@@ -90,3 +90,8 @@ changelog:
       - '^chore'
       - '^test'
       - '^docket'
+
+# A software bill of materials beside each archive. Needs syft on PATH, which both
+# workflows install.
+sboms:
+  - artifacts: archive
