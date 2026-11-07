@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 9 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 25 killed
+**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 8 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 26 killed
 
 ## 🟢 In progress (2)
 
@@ -15,14 +15,13 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (9)
+## 🟡 Proposed (8)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0140](active/0140-object-storage-backend-for-the-artifact-store.md) | Object-storage backend for the artifact store | `medium` | `feat` | needs-grooming |
 | [0139](active/0139-segment-index-is-safe-with-concurrent-writers.md) | Segment index is safe with concurrent writers | `low` | `fix` | needs-grooming |
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
-| [0137](active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | `medium` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
@@ -49,10 +48,6 @@ graph TD
   0123
   0125
   0128 --> 0129
-  0128 --> 0137
-  0129 --> 0137
-  0130 --> 0137
-  0133 --> 0137
   0138
   0139
   0140
@@ -64,10 +59,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (128)</summary>
+<details><summary>✅🗑️ Archive — done + killed (129)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0137](archive/2026-11-07-0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | 2026-11-07 |
 | [0136](archive/2026-11-07-0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md) | Loop-scoped secrets can survive a move through an opt-in secret store adapter | 2026-11-07 |
 | [0135](archive/2026-11-07-0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | 2026-11-07 |
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |

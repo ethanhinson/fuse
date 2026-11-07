@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0137 — Tool execution seam with in-process and remote-worker executors](../../changes/active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md)**
+> ↩ **[Change 0137 — Tool execution seam with in-process and remote-worker executors](../../changes/archive/2026-11-07-0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md)**
 <!-- docket:backlink:end -->
 
 # Tool execution seam with in-process and remote-worker executors

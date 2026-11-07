@@ -2,12 +2,12 @@
 id: 137
 slug: 'tool-execution-seam-with-in-process-and-remote-worker-execut'
 title: 'Tool execution seam with in-process and remote-worker executors'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: [128, 129, 130, 133]
 stacked_on:
 related: [75, 117]
@@ -44,3 +44,7 @@ A `ToolExecutor` interface in front of the registry with the in-process executor
 ## Out of scope
 
 Remote MCP execution (MCP tools stay in-process in this change; the executor routes them locally); remote child agents; scheduling policy beyond FIFO per tenant.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
