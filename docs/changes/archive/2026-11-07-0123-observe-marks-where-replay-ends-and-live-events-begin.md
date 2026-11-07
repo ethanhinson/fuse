@@ -2,12 +2,12 @@
 id: 123
 slug: 'observe-marks-where-replay-ends-and-live-events-begin'
 title: 'Observe marks where replay ends and live events begin'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [117]
@@ -42,3 +42,7 @@ A caller that opens `Observe` from sequence 0 receives a replay of history follo
 ## Out of scope
 
 Changing event retention or the replay order.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared server. Observe replay markers only serve the network server, which is being deleted.

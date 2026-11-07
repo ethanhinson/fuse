@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 5 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 29 killed
+**143 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 30 killed
 
 ## 🟢 In progress (2)
 
@@ -15,13 +15,12 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (5)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
-| [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -41,7 +40,6 @@ graph TD
   0081
   0083
   0111
-  0123
   0125
   0128 --> 0129
   0138
@@ -53,7 +51,7 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (132)</summary>
+<details><summary>✅🗑️ Archive — done + killed (133)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
@@ -69,6 +67,7 @@ graph TD
 | [0130](archive/2026-11-07-0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | 2026-11-07 |
 | [0126](archive/2026-11-07-0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | 2026-11-07 |
 | [0124](archive/2026-11-07-0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | 2026-11-07 |
+| [0123](archive/2026-11-07-0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | 2026-11-07 |
 | [0122](archive/2026-11-07-0122-spawn-start-names-the-worker-a-child-was-bound-to.md) | spawn.start names the worker a child was bound to | 2026-11-07 |
 | [0121](archive/2026-11-07-0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | 2026-11-07 |
 | [0120](archive/2026-11-07-0120-at-most-one-loop-cancelled-per-loop-under-replica-races.md) | At most one loop.cancelled per loop under replica races | 2026-11-07 |
