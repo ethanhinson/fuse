@@ -12,8 +12,8 @@ import (
 func TestGatewayAdapterAppliesRequestTimeout(t *testing.T) {
 	cfg := config.Default()
 	def := gatewayAdapter(cfg, nil).RequestTimeout
-	if def <= 0 {
-		t.Fatalf("default RequestTimeout = %v, want a positive built-in", def)
+	if def != 0 {
+		t.Fatalf("default RequestTimeout = %v, want no limit on a local run", def)
 	}
 	cfg.Gateway.RequestTimeout = "20m"
 	if got := gatewayAdapter(cfg, nil).RequestTimeout; got != 20*time.Minute {

@@ -164,6 +164,10 @@ type Deps struct {
 	// a loop started without a harness spec. Like LoopFactory.NoTools, the runtime
 	// reads it only to refuse an orchestrating loop (ErrNoToolsOrchestrate).
 	NoTools bool
+
+	// CurrentSkillsDigest returns the installed-skills digest the binding holds
+	// right now, recorded on loop.harness at loop start; nil means "".
+	CurrentSkillsDigest func() string
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
@@ -682,7 +686,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// before the agent can emit anything: a resume on any replica rebuilds the loop
 	// from this record. A resume does not record again - the stream already has it.
 	if cfg.Harness != nil && !opts.resume {
-		ev, herr := harnessEvent(rootID, cfg.Harness)
+		installedDigest := ""
+		if r.deps.CurrentSkillsDigest != nil {
+			installedDigest = r.deps.CurrentSkillsDigest()
+		}
+		ev, herr := harnessEvent(rootID, cfg.Harness, installedDigest)
 		if herr == nil {
 			herr = store.Append(ev)
 		}
@@ -1243,7 +1251,7 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 	// A loop started from a harness spec is rebuilt from the spec it recorded
 	// (change 0085), re-resolved over this replica's operator config, so every
 	// replica revives the same harness rather than its process config.
-	spec, err := harnessFromEvents(events)
+	spec, recordedDigest, err := harnessFromEvents(events)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: resume: %w", err)
 	}
@@ -1253,6 +1261,22 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 		Tenant:      event.NormalizeTenant(tenant),
 		Interactive: true,
 		Harness:     spec,
+	}
+	// Skills drift (change 0134): when the loop records an installed-skills
+	// digest (it was started by a digest-tracking server) and THIS replica's
+	// current installed set differs, append a non-fatal skills_drift warning to
+	// the stream so operators and clients can see that the loop resumed under a
+	// different installed set. The existing RuleSkillRef refusal still applies
+	// when a referenced skill is missing; drift only warns.
+	if spec != nil && recordedDigest != "" {
+		if holder, ok := r.deps.Harness.(interface{ CurrentSkillsDigest() string }); ok {
+			cur := holder.CurrentSkillsDigest()
+			if cur != "" && cur != recordedDigest {
+				if err := r.appendSkillsDrift(ctx, key, loopID, recordedDigest, cur); err != nil {
+					return nil, fmt.Errorf("runtime: resume: record skills drift: %w", err)
+				}
+			}
+		}
 	}
 	// The replayed stream is also where the resumed session's TRACE identity comes from
 	// (change 0071): every event carries the durable carrier of the session that emitted

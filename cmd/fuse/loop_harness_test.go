@@ -129,9 +129,18 @@ func harnessServerWith(t *testing.T, operatorYAML string, gw http.Handler) (runt
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolReg := defaultToolRegistry(nil, cfg.Research, skillSet.Lookup)
+	live := &atomicSkills{}
+	live.Snapshot(skillSet, skills.DigestOf(skillSet))
+	skillLookup := func(name string) (skills.Skill, bool) {
+		set, _ := live.Load()
+		if set == nil {
+			return skills.Skill{}, false
+		}
+		return set.Lookup(name)
+	}
+	toolReg := defaultToolRegistry(nil, cfg.Research, skillLookup)
 	deps := assembleLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, toolReg, rootSystemBlock(cfg, skillSet),
-		permissions.AlwaysApprove, sessionRateGate(cfg), observe.NoopObserver{}, nil, nil, skillSet)
+		permissions.AlwaysApprove, sessionRateGate(cfg), observe.NoopObserver{}, nil, nil, live)
 	deps.BaseDir = t.TempDir()
 	return deps, deps.Harness.(*loopServerHost)
 }

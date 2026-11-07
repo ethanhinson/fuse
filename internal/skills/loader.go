@@ -1,7 +1,7 @@
 package skills
 
 import (
-	"log"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,71 +29,24 @@ func DefaultDirs() []string {
 // Load scans each directory for immediate subdirectories containing a
 // SKILL.md, parses them, and returns a Set. Missing directories are skipped.
 // When two skills share a name, the one from the earlier directory wins.
+// This now delegates to FSSource internally (change 0134).
 func Load(dirs []string) (*Set, error) {
-	set := &Set{}
-	seen := map[string]bool{}
-	for _, dir := range dirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		for _, e := range entries {
-			if !e.IsDir() {
-				// DirEntry.IsDir() returns false for symlinks; follow the link.
-				info, err := os.Stat(filepath.Join(dir, e.Name()))
-				if err != nil || !info.IsDir() {
-					continue
-				}
-			}
-			path := filepath.Join(dir, e.Name(), "SKILL.md")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return nil, err
-			}
-			sk, err := ParseSkill(path, data)
-			if err != nil {
-				log.Printf("[skills] skipping %s: %v", path, err)
-				continue
-			}
-			if seen[sk.Name] {
-				continue
-			}
-			seen[sk.Name] = true
-			set.skills = append(set.skills, sk)
-		}
+	src := FSSource{Dirs: dirs}
+	set, _, err := src.Load(context.Background())
+	if err != nil {
+		return nil, err
 	}
 	return set, nil
 }
 
 // LoadWithEmbedded runs Load(dirs) and then folds in the compiled-in embedded
-// skills for any name not already present. Filesystem skills always win: a user
-// skill named "research" shadows the embedded one (first-wins preserved), and
-// embedded skills rank lowest.
+// skills for any name not already present. Filesystem skills always win.
+// This now delegates to ComposeEmbedded internally (change 0134).
 func LoadWithEmbedded(dirs []string) (*Set, error) {
-	set, err := Load(dirs)
+	src := FSSource{Dirs: dirs}
+	set, _, err := ComposeEmbedded(context.Background(), src)
 	if err != nil {
 		return nil, err
-	}
-	seen := map[string]bool{}
-	for _, sk := range set.skills {
-		seen[sk.Name] = true
-	}
-	emb, err := Embedded()
-	if err != nil {
-		return nil, err
-	}
-	for _, sk := range emb {
-		if seen[sk.Name] {
-			continue
-		}
-		seen[sk.Name] = true
-		set.skills = append(set.skills, sk)
 	}
 	return set, nil
 }

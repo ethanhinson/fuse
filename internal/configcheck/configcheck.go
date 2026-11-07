@@ -25,7 +25,7 @@ func Registry(cfg config.Config) *model.Registry {
 	}
 	for alias, mc := range cfg.Models.Entries {
 		reg.Set(alias, model.ModelConfig{
-			ID: mc.ID, MaxTokens: mc.MaxTokens, ContextWindow: mc.ContextWindow,
+			ID: mc.ID, MaxTokens: mc.MaxTokens, MaxTokensCeiling: mc.MaxTokensCeiling, ContextWindow: mc.ContextWindow,
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix,
 			Label: mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
 			Hidden: mc.Advertise != nil && !*mc.Advertise,
