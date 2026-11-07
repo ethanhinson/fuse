@@ -7,11 +7,15 @@ import (
 
 // ModelConfig is a resolved model entry inside the registry.
 type ModelConfig struct {
-	ID            string
-	MaxTokens     int
-	ContextWindow int // model context size in tokens; 0 = harness default (128k)
-	Persona       string
-	SystemPrefix  string // prepended before the persona system prompt; for model-specific directives
+	ID        string
+	MaxTokens int
+	// MaxTokensCeiling is the highest output cap a truncated reply may raise
+	// MaxTokens to. 0 = four times MaxTokens; set it equal to MaxTokens to make
+	// MaxTokens a hard limit.
+	MaxTokensCeiling int
+	ContextWindow    int // model context size in tokens; 0 = harness default (128k)
+	Persona          string
+	SystemPrefix     string // prepended before the persona system prompt; for model-specific directives
 	// Operator display metadata advertised by GetCapabilities; nothing else
 	// reads it.
 	Label       string

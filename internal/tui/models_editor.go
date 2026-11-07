@@ -271,6 +271,7 @@ func (m ShellModel) saveModelForm() (bool, tea.Model, tea.Cmd) {
 	// model.
 	if f.editing {
 		if prev, err := m.reg.Resolve(f.origAlias); err == nil {
+			mc.MaxTokensCeiling = prev.MaxTokensCeiling
 			mc.SystemPrefix = prev.SystemPrefix
 			mc.Label = prev.Label
 			mc.Description = prev.Description
@@ -331,14 +332,15 @@ func (m ShellModel) deleteSelectedModel() (bool, tea.Model, tea.Cmd) {
 // equivalent for persistence.
 func toConfigModel(mc model.ModelConfig) config.ModelConfig {
 	out := config.ModelConfig{
-		ID:            mc.ID,
-		MaxTokens:     mc.MaxTokens,
-		ContextWindow: mc.ContextWindow,
-		Persona:       mc.Persona,
-		SystemPrefix:  mc.SystemPrefix,
-		Label:         mc.Label,
-		Description:   mc.Description,
-		Tags:          mc.Tags,
+		ID:               mc.ID,
+		MaxTokens:        mc.MaxTokens,
+		MaxTokensCeiling: mc.MaxTokensCeiling,
+		ContextWindow:    mc.ContextWindow,
+		Persona:          mc.Persona,
+		SystemPrefix:     mc.SystemPrefix,
+		Label:            mc.Label,
+		Description:      mc.Description,
+		Tags:             mc.Tags,
 	}
 	if mc.Hidden {
 		no := false

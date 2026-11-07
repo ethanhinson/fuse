@@ -63,7 +63,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// every early return below is covered by this single defer.
 	defer closeObs()
 
-	skillDirs := skills.DefaultDirs()
+	skillDirs := skillDirsFromConfig(cfg)
 
 	set, err := skills.LoadWithEmbedded(skillDirs)
 	if err != nil {

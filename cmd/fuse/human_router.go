@@ -51,8 +51,10 @@ func newHumanRouter(cfg config.Config, reg *model.Registry) agent.RouterLLM {
 	if _, err := reg.Resolve(modelID); err != nil {
 		modelID = ""
 	}
+	client := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	client.RequestTimeout = model.HelperRequestTimeout
 	return &humanRouter{
-		client:  model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil),
+		client:  client,
 		modelID: modelID,
 	}
 }
@@ -64,7 +66,10 @@ concerns that agent's work. Choose "queued" with an empty handle when it is
 general, ambiguous, or addresses the whole task. Never invent a handle that is not
 in the list. Output nothing but the JSON object.`
 
-const routerMaxTokens = 60
+// routerMaxTokens bounds the routing reply. The JSON itself is tiny, but the cap
+// also pays for reasoning, and a reply cut off before it falls back to "queued"
+// without any signal that routing did not really run.
+const routerMaxTokens = 512
 
 func (r *humanRouter) Classify(ctx context.Context, text string, live []agent.NodeInfo, selected string) (agent.RouteDecision, error) {
 	var b strings.Builder

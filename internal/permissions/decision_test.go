@@ -156,6 +156,17 @@ func TestDecisionSink_ClassifierAndParseLayers(t *testing.T) {
 		if (*rec)[0].Verdict != "ask" || (*rec)[0].Layer != LayerParse {
 			t.Fatalf("unparseable bash must ask via the parse layer, got %+v", (*rec)[0])
 		}
+		// The reason names the shell construct responsible for the refusal.
+		// `$(whoami)` is a command substitution whose inner statement (whoami)
+		// is not on the read-only safe list, so classifyWord fails the word
+		// and the parser returns a *ParseError with Reason
+		// "word not statically resolvable". The gate threads it onto the
+		// parse-layer ask. Pin it so a future regression that drops the
+		// reason (or relabels the construct) is caught.
+		wantReason := parseFloorReason("word not statically resolvable")
+		if (*rec)[0].Reason != wantReason {
+			t.Errorf("unparseable parse-layer ask reason = %q, want %q", (*rec)[0].Reason, wantReason)
+		}
 	})
 }
 
