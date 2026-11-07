@@ -59,11 +59,11 @@ func TestRead_LongFile_WindowedWithFooter(t *testing.T) {
 }
 
 func TestRead_HugeFile_MemoryBounded(t *testing.T) {
-	defect(t, "read_file loads the whole file into memory even to return a window; no size guard (internal/archive/archive.go:92)")
 	if testing.Short() {
 		t.Skip("slow")
 	}
-	t.Parallel()
+	// Not parallel: on Linux a child starts with the peak RSS of the process that
+	// forked it, so a large parallel test would be charged to this one.
 	srv, h := scripted(t)
 	path := h.path("huge.dat")
 	f, err := os.Create(path)
@@ -77,9 +77,7 @@ func TestRead_HugeFile_MemoryBounded(t *testing.T) {
 	srv.script(tool("read_file", map[string]any{"path": path, "start_line": 1, "end_line": 2}), text("done"))
 	r := h.run()
 	wantCode(t, r, 0)
-	if r.maxRSS > memLimit {
-		t.Fatalf("peak RSS %dMB reading two lines of a 1GB file, limit %dMB", r.maxRSS>>20, memLimit>>20)
-	}
+	wantRSSBelowLimit(t, r, "reading two lines of a 1GB file")
 }
 
 // A FIFO blocks os.ReadFile forever. The tool timeout has to bound it.
@@ -386,26 +384,21 @@ func TestBash_HugeOutput_SpillsAndIsRecoverable(t *testing.T) {
 }
 
 func TestBash_HugeOutput_MemoryBounded(t *testing.T) {
-	defect(t, "bash buffers all output in memory via CombinedOutput with no cap; a noisy command can OOM the harness (internal/tools/sandbox/host.go:157)")
 	if testing.Short() {
 		t.Skip("slow")
 	}
-	t.Parallel()
+	// Not parallel: on Linux a child starts with the peak RSS of the process that
+	// forked it, so a large parallel test would be charged to this one.
 	srv, h := scripted(t)
 	h.hostSandbox()
 	srv.script(tool("bash", map[string]string{"command": `head -c 300000000 /dev/zero | tr '\0' x`}), text("done"))
 	r := h.run("--approve-all")
 	wantCode(t, r, 0)
-	if r.maxRSS > memLimit {
-		t.Fatalf("peak RSS %dMB for 300MB of output, limit %dMB", r.maxRSS>>20, memLimit>>20)
-	}
+	wantRSSBelowLimit(t, r, "for 300MB of output")
 }
 
 // A bare command: the shell execs into it, so killing the shell kills it.
 func TestBash_Forever_TimeoutSeconds_Simple(t *testing.T) {
-	if runtime.GOOS == "linux" {
-		defect(t, "on Linux /bin/sh forks instead of execing, so the bash timeout kills only sh while its child holds the pipe")
-	}
 	t.Parallel()
 	srv, h := scripted(t)
 	h.hostSandbox()
@@ -437,7 +430,6 @@ func TestBash_Forever_ToolTimeoutBoundsRun(t *testing.T) {
 // A compound command's shell is killed but its child keeps the output pipe open,
 // so CombinedOutput blocks: the requested timeout isn't honored and the child lives.
 func TestBash_TimeoutSeconds_CompoundCommand_KillsChildrenPromptly(t *testing.T) {
-	defect(t, "bash timeout kills only /bin/sh: no process group, no WaitDelay, so a compound command blocks past timeout_seconds and its child is orphaned (internal/tools/sandbox/host.go:97,157)")
 	t.Parallel()
 	srv, h := scripted(t)
 	h.hostSandbox()
@@ -469,4 +461,22 @@ func TestBash_ExitStatusReported(t *testing.T) {
 	out := runOneTool(t, srv, h, "bash", map[string]string{"command": "echo oops; exit 7"}, "--approve-all")
 	wantContains(t, out, "oops", "tool result")
 	wantContains(t, out, "exit status 7", "tool result")
+}
+
+// wantRSSBelowLimit fails a run that used too much memory. On Linux a child starts
+// with the peak RSS of the process that forked it, so once this test binary has grown
+// past the limit the child's figure proves nothing. That happens on later rounds of
+// -count. The test then skips rather than report the parent's memory as the child's.
+func wantRSSBelowLimit(t *testing.T, r result, what string) {
+	t.Helper()
+	if r.maxRSS <= memLimit {
+		return
+	}
+	if runtime.GOOS == "linux" {
+		var self syscall.Rusage
+		if err := syscall.Getrusage(syscall.RUSAGE_SELF, &self); err == nil && self.Maxrss*1024 > memLimit {
+			t.Skipf("inconclusive: this test process peaked at %dMB, which the child inherits", self.Maxrss>>10)
+		}
+	}
+	t.Fatalf("peak RSS %dMB %s, limit %dMB", r.maxRSS>>20, what, memLimit>>20)
 }

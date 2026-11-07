@@ -74,7 +74,7 @@ func (editTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: fmt.Sprintf("old_string is not unique (%d matches)", n)}
 	}
 	updated := strings.Replace(content, a.OldString, a.NewString, 1)
-	if err := os.WriteFile(a.Path, []byte(updated), 0o644); err != nil {
+	if err := writeFileAtomic(a.Path, []byte(updated)); err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
 

@@ -11,6 +11,7 @@
 package archive
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"fmt"
@@ -101,6 +102,61 @@ func Open(path string) ([]byte, error) {
 	}
 	return gunzipIfNeeded(b)
 }
+
+// OpenStream is Open without the read: the same path fallback and gzip detection,
+// but the caller reads as much as it wants, so asking for two lines of a huge file
+// costs two lines of memory. size is the content length when the file is plaintext
+// and regular, else -1. A truncated or corrupt gzip stream surfaces as a read
+// error, and only if the read gets that far.
+func OpenStream(path string) (rc io.ReadCloser, size int64, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if !os.IsNotExist(err) || hasGzSuffix(path) {
+			return nil, -1, err
+		}
+		gf, gerr := os.Open(path + GzSuffix)
+		if gerr != nil {
+			return nil, -1, err // report the path that was asked for
+		}
+		f = gf
+	}
+	br := bufio.NewReader(f)
+	magic, err := br.Peek(len(gzMagic))
+	if err != nil && err != io.EOF {
+		f.Close()
+		return nil, -1, err // e.g. the path is a directory
+	}
+	if !isGzip(magic) {
+		size = -1
+		if info, serr := f.Stat(); serr == nil && info.Mode().IsRegular() {
+			size = info.Size()
+		}
+		return &streamReader{r: br, f: f}, size, nil
+	}
+	zr, err := gzip.NewReader(br)
+	if err != nil {
+		f.Close()
+		return nil, -1, fmt.Errorf("gzip open: %w", err)
+	}
+	return &streamReader{r: zr, f: f, gz: true}, -1, nil
+}
+
+// streamReader closes the underlying file and labels gzip failures the way Open does.
+type streamReader struct {
+	r  io.Reader
+	f  *os.File
+	gz bool
+}
+
+func (s *streamReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF && s.gz {
+		err = fmt.Errorf("gzip read: %w", err)
+	}
+	return n, err
+}
+
+func (s *streamReader) Close() error { return s.f.Close() }
 
 // gunzipIfNeeded decompresses b when it starts with the gzip magic, else returns
 // b unchanged. This keeps OLD plaintext files readable alongside new .gz ones.

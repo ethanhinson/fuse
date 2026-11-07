@@ -284,6 +284,7 @@ func stripUntrusted(raw *rawConfig) (ignored []string) {
 	drop(raw.MaxTurns != nil, "max_turns", func() { raw.MaxTurns = nil })
 	drop(raw.NoProgressCalls != nil, "no_progress_calls", func() { raw.NoProgressCalls = nil })
 	drop(raw.MaxRunTokens != 0, "max_run_tokens", func() { raw.MaxRunTokens = 0 })
+	drop(raw.MaxRunDuration != "", "max_run_duration", func() { raw.MaxRunDuration = "" })
 	drop(raw.MaxTokens != 0, "max_tokens", func() { raw.MaxTokens = 0 })
 	drop(raw.Instructions != "", "instructions", func() { raw.Instructions = "" })
 	drop(len(raw.MCPServers) > 0, "mcp_servers", func() { raw.MCPServers = nil })
@@ -346,6 +347,13 @@ func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[
 	}
 	if raw.MaxRunTokens != 0 {
 		c.MaxRunTokens = raw.MaxRunTokens
+	}
+	if raw.MaxRunDuration != "" {
+		d, err := time.ParseDuration(raw.MaxRunDuration)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("%s: max_run_duration %q is not a positive duration (e.g. \"30m\")", path, raw.MaxRunDuration)
+		}
+		c.MaxRunDuration = d
 	}
 	if raw.MaxTokens != 0 {
 		c.MaxTokens = raw.MaxTokens

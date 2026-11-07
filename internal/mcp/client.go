@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/ethanhinson/fuse/internal/procgroup"
 )
 
 // defaultLogCap is the default stderr ring buffer capacity per server.
@@ -145,6 +147,9 @@ func newStdioClient(name string, command []string, env []string) (*StdioClient, 
 	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = env
+	// npx, uvx and shell wrappers fork the real server. A group is what lets stop()
+	// reach it, because the launcher's own death does not.
+	procgroup.Configure(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -287,9 +292,11 @@ func (c *StdioClient) notify(_ context.Context, method string, params any) error
 	return nil
 }
 
-// stop terminates the server process.
+// stop terminates the server process and anything it forked. The group kill comes
+// before Wait so the leader is still unreaped, which keeps its pid from being reused
+// as a group id, even if the leader itself died long ago.
 func (c *StdioClient) stop() {
 	c.closeAll()
-	_ = c.cmd.Process.Kill()
+	_ = procgroup.Kill(c.cmd.Process.Pid)
 	_ = c.cmd.Wait()
 }

@@ -2,6 +2,8 @@
 // .fuse.local.yml, falling back to a built-in default registry when absent.
 package config
 
+import "time"
+
 // Gateway describes the LiteLLM gateway endpoint.
 type Gateway struct {
 	URL string `yaml:"url"`
@@ -263,11 +265,14 @@ type Config struct {
 	// MaxRunTokens caps the input and output tokens one run's whole agent tree may
 	// use. 0 = no cap.
 	MaxRunTokens int64
-	MaxTokens    int
-	Permissions  PermissionsConfig
-	MCPServers   []MCPServerConfig
-	Research     ResearchConfig
-	Agents       AgentsConfig
+	// MaxRunDuration bounds a one-shot run's wall-clock time. 0 = no limit. Home
+	// config only: a repo must not be able to extend a run it can also direct.
+	MaxRunDuration time.Duration
+	MaxTokens      int
+	Permissions    PermissionsConfig
+	MCPServers     []MCPServerConfig
+	Research       ResearchConfig
+	Agents         AgentsConfig
 	// Throughput is the turn-level rate/quota surface (change 0036): global
 	// requests-per-minute / tokens-per-minute smoothing plus an optional session
 	// token ceiling, with optional per-provider rate overrides. Every numeric is
@@ -341,6 +346,7 @@ type rawConfig struct {
 	MaxTurns        *int                   `yaml:"max_turns"`
 	NoProgressCalls *int                   `yaml:"no_progress_calls"`
 	MaxRunTokens    int64                  `yaml:"max_run_tokens"`
+	MaxRunDuration  string                 `yaml:"max_run_duration"`
 	FinishCheck     bool                   `yaml:"finish_check"`
 	MaxTokens       int                    `yaml:"max_tokens"`
 	Instructions    string                 `yaml:"instructions"`
