@@ -185,7 +185,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// one-shot mode can invoke a matching skill, exactly like shell mode. The
 	// skill tool needs a real lookup and the skills directive must ride in the
 	// system prompt — without both, `fuse "<task>"` can never call a skill.
-	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
+	skillSet, serr := skills.LoadWithEmbedded(skillDirsFromConfig(cfg))
 	if serr != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1

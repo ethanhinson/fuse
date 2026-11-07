@@ -444,10 +444,15 @@ type LoopParkedPayload struct {
 // for people and tools reading the stream. It names secrets but never holds
 // their values. It does include the bodies of any skills the spec carries (at
 // most 262144 bytes in total, change 0118).
+//
+// InstalledSkillsDigest (change 0134) is the digest of the server's installed
+// skill set at the moment the loop started; a resume on a replica whose set
+// differs logs skills_drift (non-fatal).
 type LoopHarnessPayload struct {
-	Spec      json.RawMessage `json:"spec"`
-	SpecBytes []byte          `json:"spec_bytes"`
-	Digest    string          `json:"digest"`
+	Spec                  json.RawMessage `json:"spec"`
+	SpecBytes             []byte          `json:"spec_bytes"`
+	Digest                string          `json:"digest"`
+	InstalledSkillsDigest string          `json:"installed_skills_digest,omitempty"`
 }
 
 // MCPServerPayload accompanies KindMCPServer. Tools are the tool names exposed

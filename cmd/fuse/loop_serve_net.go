@@ -366,19 +366,34 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	approve := permissions.AlwaysApprove
 
 	// Load skills + tools EXACTLY as runLoopServer does so the two bindings serve an
-	// identically-wired Runtime.
-	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
+	// identically-wired Runtime. Installed skills come from the configured source,
+	// refreshed on the configured interval (change 0134).
+	src, serr := skillSourceFromConfig(cfg)
 	if serr != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	systemBlock := rootSystemBlock(cfg, skillSet)
+	skillSet, stopSkills, serr := startSkillsRefresh(context.Background(), src, cfg.Skills.RefreshDuration(), func() {})
+	if serr != nil {
+		fmt.Fprintf(stderr, "skills error: %v\n", serr)
+		return 1
+	}
+	defer stopSkills()
+	liveSet, _ := skillSet.Load()
+	systemBlock := rootSystemBlock(cfg, liveSet)
+	skillLookup := func(name string) (skills.Skill, bool) {
+		set, _ := skillSet.Load()
+		if set == nil {
+			return skills.Skill{}, false
+		}
+		return set.Lookup(name)
+	}
 	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=TRUE: this
 	// binding serves remote principals over the network, so no local file may
 	// authorize running their commands uncontained on this host.
 	sb, closeEgress := newSandboxService(cfg, true, stderr)
 	defer closeEgress()
-	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillLookup)
 
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
 	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so

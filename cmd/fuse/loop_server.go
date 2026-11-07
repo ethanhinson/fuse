@@ -75,19 +75,40 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 	// no human on a TTY. It is not a property of the Runtime seam.
 	approve := permissions.AlwaysApprove
 
-	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
+	// Installed skills come from the configured source (change 0134): the
+	// filesystem adapter over skills.dirs by default, refreshed on the
+	// configured interval so the hosted set follows installed-skill changes.
+	// The initial load failing is a startup error — a server never starts
+	// advertising a guessed set.
+	src, serr := skillSourceFromConfig(cfg)
 	if serr != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	systemBlock := rootSystemBlock(cfg, skillSet)
+	skillSet, stopSkills, serr := startSkillsRefresh(context.Background(), src, cfg.Skills.RefreshDuration(), func() {})
+	if serr != nil {
+		fmt.Fprintf(stderr, "skills error: %v\n", serr)
+		return 1
+	}
+	defer stopSkills()
+	liveSet, _ := skillSet.Load()
+	systemBlock := rootSystemBlock(cfg, liveSet)
+	// The skill tool resolves through the LIVE atomic set, so a refresh is
+	// visible to a loop immediately.
+	skillLookup := func(name string) (skills.Skill, bool) {
+		set, _ := skillSet.Load()
+		if set == nil {
+			return skills.Skill{}, false
+		}
+		return set.Lookup(name)
+	}
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE at startup.
 	// hosted=TRUE — the loop server executes workloads on behalf of REMOTE
 	// principals, so the local off-switch file is structurally inert and a bash
 	// call with no container runtime refuses rather than falling back to this host.
 	sb, closeEgress := newSandboxService(cfg, true, stderr)
 	defer closeEgress()
-	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillLookup)
 
 	// Reuse the one-shot deps wiring but with a REAL event store so observe/attach
 	// have durable history. Renderer is a discarding renderer — binding #2 has no
@@ -176,7 +197,7 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 // under Compose `depends_on: service_healthy` means it never fires.
 func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
-	rateGate model.RateGate, observer observe.Observer, skillSet *skills.Set) (runtime.Deps, error) {
+	rateGate model.RateGate, observer observe.Observer, skillSet *atomicSkills) (runtime.Deps, error) {
 	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
 	var fsErr fsBackendError
 	if errors.As(derr, &fsErr) {
@@ -211,12 +232,13 @@ func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, re
 // fuse.harness.v1 HarnessSpec: the spec is validated and layered over cfg (the
 // operator's trusted config is the floor), and that loop is built by the same
 // per-loop factory as every other loop, from its resolved settings instead of the
-// server's. skillSet is the set of skills installed on the server, which a spec's
-// skill references resolve against (nil: none).
+// server's. skillSet is the live atomic installed-skill set (change 0134), which a
+// spec's skill references resolve against (nil: none) and a refresh updates in
+// place.
 func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
 	rateGate model.RateGate, observer observe.Observer,
-	durableStore event.DurableStore, durableReg event.LoopRegistry, skillSet *skills.Set) runtime.Deps {
+	durableStore event.DurableStore, durableReg event.LoopRegistry, skillSet *atomicSkills) runtime.Deps {
 	if observer == nil {
 		observer = observe.NoopObserver{}
 	}
@@ -247,6 +269,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 			systemBlock: systemBlock,
 			rateGate:    rateGate,
 			mcpOpts:     mcpOpts,
+			liveSkills:  true, // the operator floor is built at startup; roots read the live set
 		},
 	}
 	server := host.factory(host.operator)
@@ -292,6 +315,9 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		BuildAgent:      server.BuildAgent,
 		Harness:         host,
 		NoTools:         server.NoTools,
+		// The installed-skills digest recorded on loop.harness is taken at loop
+		// start from the host's live set, not captured at assembly time.
+		CurrentSkillsDigest: host.CurrentSkillsDigest,
 	}
 }
 
@@ -308,17 +334,26 @@ type loopSettings struct {
 	systemBlock string
 	rateGate    model.RateGate
 	mcpOpts     []mcp.ManagerOption
+
+	// liveSkills marks settings whose systemBlock was captured at server
+	// startup over the then-current installed set: the root agent's skills
+	// listing must follow the live atomicSkills instead, so a refresh between
+	// server start and a loop start is visible. settingsFor leaves it false —
+	// it already derives its block from the live set per loop.
+	liveSkills bool
 }
 
 // loopServerHost is the per-server state every hosted loop's construction
 // shares: the frozen sandbox substrate, the binding's approval policy, the
-// observer, the installed skills, the per-loop MCP manager registry, and the
-// server's own loop settings (the operator floor for harness specs).
+// observer, the installed skills (the live atomic set change 0134 refreshes on
+// a ticker, so a loop start, capability query or resume reads the current set),
+// the per-loop MCP manager registry, and the server's own loop settings (the
+// operator floor for harness specs).
 type loopServerHost struct {
 	sb          *sandbox.Service
 	rootApprove permissions.Approver
 	observer    observe.Observer
-	skills      *skills.Set
+	skills      *atomicSkills
 	operator    loopSettings
 
 	// Per-loop MCP manager registry (change #59, Task 4): each hosted loop gets its OWN
@@ -337,7 +372,22 @@ type loopServerHost struct {
 	mintAudit *loopMintAudit
 }
 
-// teardown releases what a loop's NewToolRegistry attached to its registry.
+// rootBlock returns the root agent's system block for a loop built from s.
+// Server-startup settings carry a systemBlock captured over the installed set
+// at startup; their root agent must instead see the CURRENT set, so a skills
+// refresh between server start and a loop start is reflected. Settings
+// resolved per loop (settingsFor) already read the live set, so theirs is
+// returned as captured.
+func (h *loopServerHost) rootBlock(s loopSettings) string {
+	if s.liveSkills && h.skills != nil {
+		set, _ := h.skills.Load()
+		return rootSystemBlock(s.cfg, set)
+	}
+	return s.systemBlock
+}
+
+// teardown releases what a loop's NewToolRegistry attached to its registry:
+// the per-loop MCP manager and the per-loop bash sandbox pool.
 func (h *loopServerHost) teardown(loopReg *tools.Registry) {
 	if v, ok := h.loopManagers.LoadAndDelete(loopReg); ok {
 		v.(*mcp.Manager).Close()
@@ -356,6 +406,7 @@ func (h *loopServerHost) teardown(loopReg *tools.Registry) {
 func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 	sb, cfg, reg, modelAlias, toolReg, systemBlock := h.sb, s.cfg, s.reg, s.modelAlias, s.toolReg, s.systemBlock
 	rootApprove, rateGate, observer, mcpOpts := h.rootApprove, s.rateGate, h.observer, s.mcpOpts
+	settings := s
 	loopManagers := &h.loopManagers
 	mintAudit := h.mintAudit
 	return runtime.LoopFactory{
@@ -524,7 +575,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
 			wiring.rootTools(loopToolReg, rootNode)
 
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, segSink, observer)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, h.rootBlock(settings), cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, segSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

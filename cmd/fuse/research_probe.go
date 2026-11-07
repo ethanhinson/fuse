@@ -74,7 +74,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 
 	// Load skills WITH the embedded research skill folded in, so the flow the
 	// probe drives is byte-for-byte the one /research runs.
-	set, err := skills.LoadWithEmbedded(skills.DefaultDirs())
+	set, err := skills.LoadWithEmbedded(skillDirsFromConfig(cfg))
 	if err != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", err)
 		return 1

@@ -288,7 +288,7 @@ func (f *fakeRegistry) count() int {
 func TestHarnessRecordKeepsFieldsThisReplicaDoesNotKnow(t *testing.T) {
 	b := append(harness.Encode(testSpec()), 0xf8, 0x06, 0x01) // field 111, varint 1
 	payload, _ := json.Marshal(event.LoopHarnessPayload{SpecBytes: b, Digest: harness.DigestBytes(b)})
-	spec, err := harnessFromEvents([]event.Event{{Kind: event.KindLoopHarness, Payload: payload}})
+	spec, _, err := harnessFromEvents([]event.Event{{Kind: event.KindLoopHarness, Payload: payload}})
 	if err != nil {
 		t.Fatalf("harnessFromEvents: %v", err)
 	}
