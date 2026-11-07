@@ -296,6 +296,9 @@ func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate 
 		return
 	}
 	adapter := gatewayAdapter(cfg, gate)
+	if adapter.RequestTimeout == 0 {
+		adapter.RequestTimeout = model.HelperRequestTimeout // optional scoring, with a heuristic to fall back on
+	}
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, "relevance-classifier")
 	}
@@ -381,6 +384,8 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 		return nil
 	}
 	clsAdapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	// A tool call is blocked on this verdict, so it gets a limit on total time.
+	clsAdapter.RequestTimeout = model.HelperRequestTimeout
 	if traceW != nil {
 		clsAdapter = clsAdapter.WithTraceLabel(traceW, permissions.ClassifierTraceLabel)
 	}
@@ -481,6 +486,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a.SetOutputCeiling(mc.MaxTokensCeiling)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
@@ -1140,6 +1146,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a.SetOutputCeiling(mc.MaxTokensCeiling)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)

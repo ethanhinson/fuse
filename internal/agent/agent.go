@@ -46,6 +46,9 @@ type Agent struct {
 	systemPrompt string
 	maxTurns     int
 	maxTokens    int
+	// outputCeilingTokens is the highest output cap a truncated reply may raise
+	// maxTokens to; 0 uses defaultOutputCeilingFactor.
+	outputCeilingTokens int
 
 	// ContextWindow is the model's context size in tokens; 0 uses the
 	// default (128k). The loop prunes old tool results when the estimated
@@ -362,6 +365,10 @@ func (a *Agent) SetSummarizer(s *summarizer, sink SegmentSink) {
 	}
 	a.segmentSink = sink
 }
+
+// SetOutputCeiling sets the highest output cap a truncated reply may raise
+// max_tokens to. 0 keeps the default of defaultOutputCeilingFactor x max_tokens.
+func (a *Agent) SetOutputCeiling(tokens int) { a.outputCeilingTokens = tokens }
 
 // EnableSummarization is the exported wiring entry point for Tier 2 (change
 // 0027): it builds the bounded summarizer from c (a Completer decorated with

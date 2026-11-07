@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -643,13 +644,14 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 				// mode. The legacy allow just above still admits it when the
 				// operator named it (auto_approve: ["bash:sudo"]), the boundary
 				// change 0093 pinned.
-				if command, unparseable := unparseableBash(name, args); unparseable {
+				if command, parseReason, unparseable := unparseableBash(name, args); unparseable {
 					if g.approvalProvenance == DecidedByPolicy {
 						reason := unparseableDenyPrefix + reasonCommand(command)
 						g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
 						return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
 					}
 					askLayer = LayerParse
+					askReason = parseFloorReason(parseReason)
 				}
 			case g.approvalProvenance == DecidedByPolicy:
 				reason := explicitAskReason(pat, true)
@@ -694,6 +696,18 @@ const explicitAskDenyPrefix = "matched ask rule "
 // unparseableDenyPrefix opens the reason when a command the parser refuses
 // reaches a gate with no human to ask (change 0096).
 const unparseableDenyPrefix = "unparseable command denied; no approver bound: "
+
+// parseFloorReason assembles the LayerParse ask reason from the parser's
+// *ParseError.Reason. The reason names the shell construct or command that
+// drove the refusal so the audit trail can attribute it to a shape; when the
+// reason is empty (defensive — every refusal site now produces one) the
+// returned string is empty too, preserving the pre-change behaviour.
+func parseFloorReason(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return "unparseable command: " + reason
+}
 
 // policyForcedDeny reports whether a rules-layer deny reason is one only a
 // policy stand-in produces (an explicit ask, the smart-mode catastrophic floor,
@@ -820,6 +834,17 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	// shapes change 0070 targets). Nothing after this step runs for it.
 	segments, err := splitSegments(command)
 	if err != nil {
+		// Recover the *ParseError's reason — the shell construct or command
+		// name the parser identified as responsible — so the LayerParse ask
+		// decision can carry it into the audit trail. Without it, every refusal
+		// reads as the same opaque string and we cannot see which shapes are
+		// costing prompts.
+		parseReason := ""
+		var pe *ParseError
+		if errors.As(err, &pe) {
+			parseReason = pe.Reason
+		}
+		askReason := parseFloorReason(parseReason)
 		uv, pat := evalUnparseable(command, g.cfg.Auto, g.cfg.AlwaysPrompt)
 		switch {
 		case uv == VerdictDeny:
@@ -831,7 +856,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		case g.approvalProvenance == DecidedByPolicy:
 			return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), nil, nil
 		default:
-			return VerdictAsk, LayerParse, "", nil, nil
+			return VerdictAsk, LayerParse, askReason, nil, nil
 		}
 	}
 
