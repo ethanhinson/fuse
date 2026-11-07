@@ -1,6 +1,6 @@
 # Backlog
 
-**147 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 7 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**148 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 8 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (7)
+## 🟡 Proposed (8)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0148](active/0148-show-edit-diffs-in-the-shell.md) | Show edit diffs in the shell | `medium` | `feat` | needs-grooming |
 | [0147](active/0147-hard-limits-and-clean-shutdown-for-headless-runs.md) | Hard limits and clean shutdown for headless runs | `high` | `feat` | needs-grooming |
 | [0146](active/0146-one-shot-runs-write-an-event-log.md) | One-shot runs write an event log | `high` | `feat` | needs-grooming |
 | [0145](active/0145-load-agents-md-into-the-root-agent-s-system-prompt.md) | Load AGENTS.md into the root agent's system prompt | `high` | `feat` | needs-grooming |
@@ -48,6 +49,7 @@ graph TD
   0145
   0146
   0147
+  0148
   0012:::done
   0052:::done
   0063:::done
