@@ -61,8 +61,8 @@ func TestRolesIgnoredFromLocalLayer(t *testing.T) {
 		t.Errorf("Roles = %#v, want %#v", c.Roles, want)
 	}
 	w := warnings()
-	if !strings.Contains(w, "ignores permission-loosening keys") || !strings.Contains(w, "roles") {
-		t.Errorf("warning = %q, want the permission-loosening warning naming roles", w)
+	if !strings.Contains(w, "ignores keys it may not set") || !strings.Contains(w, "roles") {
+		t.Errorf("warning = %q, want the ignored-keys warning naming roles", w)
 	}
 }
 

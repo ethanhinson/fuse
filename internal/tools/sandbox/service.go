@@ -241,7 +241,15 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 // did not do what they thought. The caller MUST log them; they are returned
 // (rather than only stashed) so that ignoring them takes a deliberate `_`.
 func NewServiceFromRoot(root string, opts ...ServiceOption) (*Service, []Warning, error) {
-	cfg, warns := LoadConfig(root)
+	return NewServiceFromConfigRoot(root, root, opts...)
+}
+
+// NewServiceFromConfigRoot is NewServiceFromRoot with the two roles separated:
+// configRoot holds .fuse/sandbox.local.yml, and root is the tree a contained
+// command sees. A process must pass a configRoot the working tree cannot write,
+// because a repository can ship that file and turn containment off.
+func NewServiceFromConfigRoot(configRoot, root string, opts ...ServiceOption) (*Service, []Warning, error) {
+	cfg, warns := LoadConfig(configRoot)
 
 	// WithTrustedRoot goes LAST — after the caller's options — so the root this
 	// function was trusted with is the one the substrate mounts, whatever else

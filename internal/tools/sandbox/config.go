@@ -368,6 +368,7 @@ type rawConcurrency struct {
 }
 
 // LoadConfig reads the operator off-switch file at <root>/.fuse/sandbox.local.yml.
+// The process passes the home directory as root, never the working tree.
 //
 // It returns the resolved Config and any non-fatal Warnings. It has no error
 // return, by design (see Warning): there is no outcome in which a caller is

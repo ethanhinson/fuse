@@ -271,7 +271,10 @@ def fuse_task_prompt(team: bool, name: str = DEFAULT_TASK_PROMPT) -> str:
 
 
 def write_workspace(ws, problem, arm, args):
-    os.makedirs(os.path.join(ws, ".fuse"), exist_ok=True)
+    # Per-run settings live in a private HOME beside the workspace: fuse ignores
+    # them in a repo-plantable file, and the agent should not be able to edit them.
+    home_fuse = os.path.join(ws + ".home", ".fuse")
+    os.makedirs(home_fuse, exist_ok=True)
     with open(os.path.join(ws, "task.md"), "w") as f:
         f.write(build_code_prompt(problem))
     tests = list(problem.public_test_cases or [])
@@ -297,7 +300,7 @@ def write_workspace(ws, problem, arm, args):
         f.write(CHECK_SAMPLES)
     # The bash tool's substrate: the host, authorized for this workspace root
     # (ADR-0044's off-switch file). solution.py runs here anyway under the grader.
-    with open(os.path.join(ws, ".fuse", "sandbox.local.yml"), "w") as f:
+    with open(os.path.join(home_fuse, "sandbox.local.yml"), "w") as f:
         f.write("handler: host\n")
     # No web, skills or pipelines (see README: editorials are online), and no
     # repo-navigation tools: the workspace is one file, so the codeindex tools
@@ -328,8 +331,13 @@ def write_workspace(ws, problem, arm, args):
         for k, v in json.loads(args.fuse_local_extra).items():
             local[k] = {**local.get(k, {}), **v} if isinstance(v, dict) and isinstance(local.get(k), dict) else v
     import yaml
-    with open(os.path.join(ws, ".fuse.local.yml"), "w") as f:
+    url, key = gateway_config()
+    local["gateway"].update(url=url, key=key)
+    with open(os.path.join(home_fuse, "config.yml"), "w") as f:
         yaml.safe_dump(local, f)
+    for name in args.skills:
+        os.makedirs(os.path.join(home_fuse, "skills"), exist_ok=True)
+        os.symlink(os.path.join(HERE, "skills", name), os.path.join(home_fuse, "skills", name))
     # Empty solution.py so "did the agent write one?" is unambiguous.
     open(os.path.join(ws, "solution.py"), "w").close()
 
@@ -449,6 +457,7 @@ def run_fuse(problem, ws, arm, args, status):
            fuse_task_prompt(team=(arm == "fuse-team"), name=args.task_prompt)]
     env = dict(os.environ)
     env.pop("FUSE_HITL_SOCKET", None)
+    env["HOME"] = ws + ".home"
     t0 = time.time()
     with open(os.path.join(ws, "stdout.txt"), "w") as out, \
             open(os.path.join(ws, "stderr.txt"), "w") as err:
@@ -800,13 +809,13 @@ def main():
                     help="fuse binary (default: this checkout's ./fuse, else PATH)")
     ap.add_argument("--tag", default="", help="suffix for the run name")
     ap.add_argument("--fuse-local-extra", default="",
-                    help='fuse arms: JSON merged into the workspace .fuse.local.yml, e.g. '
+                    help='fuse arms: JSON merged into the private per-run ~/.fuse/config.yml, e.g. '
                          '\'{"context":{"history":{"elide_assistant_after_turns":4}}}\'')
     ap.add_argument("--run-name", default=None)
     ap.add_argument("--grade-procs", type=int, default=8)
     ap.add_argument("--skills", default="",
                     help="fuse arms: comma-separated skills from skills/<name>/SKILL.md to make available "
-                         "(installed as symlinks under ~/.fuse/skills, the skill tool enabled; default: none)")
+                         "(linked into each run's private ~/.fuse/skills, the skill tool enabled; default: none)")
     ap.add_argument("--task-prompt", default=DEFAULT_TASK_PROMPT,
                     help="fuse arms: prompts/<name>.md to use as the task prompt (recorded with a content hash)")
     ap.add_argument("--dev", action="store_true",
@@ -840,19 +849,11 @@ def main():
     args.gateway_model = args.gateway_model or resolve_alias(args.model, args.fuse_bin)
     args.skills = [x for x in args.skills.split(",") if x]
     for name in args.skills:
-        # fuse discovers skills only under ~/.fuse/skills (config skill_paths is
-        # parsed but unused as of 2026-09-24); a symlink keeps the bench's copy
-        # the single source and the run's metadata records its content hash.
+        # Linked into each run's private HOME by write_workspace, so the bench's copy
+        # stays the single source and the run's metadata records its content hash.
         src = os.path.join(HERE, "skills", name)
         if not os.path.exists(os.path.join(src, "SKILL.md")):
             sys.exit(f"no such skill: {src}/SKILL.md")
-        dst = os.path.join(os.path.expanduser("~"), ".fuse", "skills", name)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if os.path.islink(dst) or os.path.exists(dst):
-            if os.path.realpath(dst) != os.path.realpath(src):
-                sys.exit(f"{dst} exists and is not the bench's skill; remove it first")
-        else:
-            os.symlink(src, dst)
     gw = gateway_config() if args.arm == "single" else None
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
