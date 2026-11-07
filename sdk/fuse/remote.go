@@ -184,6 +184,47 @@ func (b *remoteBackend) send(ctx context.Context, id LoopID, input string, opts 
 	return mapConnectError(err)
 }
 
+// cancel calls CancelLoop with the tenant threaded like every call. Unimplemented
+// means the server's runtime cannot cancel; every other failure maps as usual.
+func (b *remoteBackend) cancel(ctx context.Context, id LoopID, reason string) (CancelResult, error) {
+	resp, err := b.client.CancelLoop(ctx, connect.NewRequest(&loopv1.CancelLoopRequest{
+		LoopId: id,
+		Tenant: b.tenant,
+		Reason: reason,
+	}))
+	if err != nil {
+		if connect.CodeOf(err) == connect.CodeUnimplemented {
+			return CancelResult{}, ErrCancelUnsupported
+		}
+		return CancelResult{}, mapConnectError(err)
+	}
+	outcome, err := cancelOutcomeFromProto(resp.Msg.Outcome)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	return CancelResult{
+		Outcome:     outcome,
+		WasLive:     resp.Msg.WasLive,
+		TerminalSeq: Seq(resp.Msg.TerminalSeq),
+		Reason:      resp.Msg.Reason,
+	}, nil
+}
+
+// cancelOutcomeFromProto maps the wire enum to the SDK outcome; an unknown value
+// is a server bug or a skewed deployment, not a silent zero.
+func cancelOutcomeFromProto(o loopv1.CancelOutcome) (CancelOutcome, error) {
+	switch o {
+	case loopv1.CancelOutcome_CANCEL_OUTCOME_CANCELLED:
+		return CancelOutcomeCancelled, nil
+	case loopv1.CancelOutcome_CANCEL_OUTCOME_ALREADY_CANCELLED:
+		return CancelOutcomeAlreadyCancelled, nil
+	case loopv1.CancelOutcome_CANCEL_OUTCOME_CANCELLING:
+		return CancelOutcomeCancelling, nil
+	default:
+		return 0, fmt.Errorf("fuse: server returned an unknown cancel outcome (%d)", o)
+	}
+}
+
 // capabilities calls GetCapabilities for this Client's tenant. Unimplemented
 // means the server does not advertise; any other failure maps like every call.
 func (b *remoteBackend) capabilities(ctx context.Context) (Capabilities, error) {

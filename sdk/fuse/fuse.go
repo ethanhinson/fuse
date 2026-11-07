@@ -118,6 +118,10 @@ var (
 	// not advertise: always from NewLocal (an in-process runtime has no
 	// operator to advertise), and remotely on a connect Unimplemented.
 	ErrCapabilitiesUnsupported = errors.New("fuse: runtime does not advertise capabilities")
+	// ErrCancelUnsupported is a Cancel on a runtime without the Canceller
+	// capability: a local runtime that does not implement it, or remotely a
+	// connect Unimplemented from a server whose runtime cannot cancel loops.
+	ErrCancelUnsupported = errors.New("fuse: runtime cannot cancel loops")
 )
 
 // backend is the unexported seam the two constructors satisfy; Client delegates every
@@ -127,7 +131,31 @@ type backend interface {
 	startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error)
 	send(ctx context.Context, id LoopID, input string, opts SendOptions) error
 	observe(ctx context.Context, id LoopID, from Seq) (<-chan Event, func(), error)
+	cancel(ctx context.Context, id LoopID, reason string) (CancelResult, error)
 	capabilities(ctx context.Context) (Capabilities, error)
+}
+
+// CancelOutcome says what a Cancel did.
+type CancelOutcome int
+
+const (
+	// CancelOutcomeCancelled: this call sealed the loop.
+	CancelOutcomeCancelled CancelOutcome = iota + 1
+	// CancelOutcomeAlreadyCancelled: an earlier cancel sealed it; TerminalSeq and
+	// Reason are that first cancel's.
+	CancelOutcomeAlreadyCancelled
+	// CancelOutcomeCancelling: the cancel is recorded but the loop's terminal
+	// event has not been seen yet (another replica owns the loop, or the unwind
+	// is slow). TerminalSeq is 0.
+	CancelOutcomeCancelling
+)
+
+// CancelResult reports one Cancel.
+type CancelResult struct {
+	Outcome     CancelOutcome
+	WasLive     bool   // the cancel interrupted a running or parked loop
+	TerminalSeq Seq    // seq of loop.cancelled; 0 when not yet known
+	Reason      string // the recorded reason (the first one on AlreadyCancelled)
 }
 
 // Client is the public SDK handle. It is transport-agnostic: construct it with NewLocal
@@ -174,6 +202,17 @@ func (c *Client) Interrupt(ctx context.Context, id LoopID, input string) error {
 	return c.backend.send(ctx, id, input, SendOptions{Interrupt: true})
 }
 
+// Cancel stops a loop and seals it so it never runs again: its in-flight work is
+// cancelled, loop.cancelled is appended as the last event of its stream, and the
+// loop never accepts another Send. It is idempotent — a repeat Cancel returns
+// CancelOutcomeAlreadyCancelled with the first cancel's reason and terminal seq.
+// reason (optional, at most 256 bytes of printable UTF-8 remotely) is recorded
+// with the cancel. Remotely this needs the loop:cancel scope (or loop:admin); a
+// runtime without the capability returns ErrCancelUnsupported.
+func (c *Client) Cancel(ctx context.Context, id LoopID, reason string) (CancelResult, error) {
+	return c.backend.cancel(ctx, id, reason)
+}
+
 // Observe returns a live event tail beginning at fromSeq plus an idempotent
 // unsubscribe. Passing fromSeq = the last-seen Seq is the reconnect cursor: history
 // since fromSeq is replayed then live events follow, with no loss and no duplication
@@ -183,11 +222,13 @@ func (c *Client) Observe(ctx context.Context, id LoopID, fromSeq Seq) (<-chan Ev
 }
 
 // IsCompletion reports whether e is the deterministic "this exchange is complete, send
-// your next message" signal for a persistent (interactive) loop. It keys on the real
-// completion kind, event.KindLoopParked (never inferred from stream shape). A one-shot
-// run has no parked event; it ends at its terminal turn.end instead.
+// your next message" signal for a persistent (interactive) loop: an interactive loop
+// parking at a terminal turn boundary, or a cancelled loop's terminal event (its
+// stream ends there). It keys on the real completion kinds, event.KindLoopParked and
+// event.KindLoopCancelled (never inferred from stream shape). A one-shot run has no
+// parked event; it ends at its terminal turn.end instead.
 func IsCompletion(e Event) bool {
-	return e.Kind == event.KindLoopParked
+	return e.Kind == event.KindLoopParked || e.Kind == event.KindLoopCancelled
 }
 
 // Option configures a Client at construction (reserved for backend-specific tuning,

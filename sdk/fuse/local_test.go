@@ -29,6 +29,13 @@ type fakeRuntime struct {
 	sawSendIn   string
 	sendErr     error
 
+	// cancelRes/cancelErr script the Canceller capability; sawCancel* record the call.
+	cancelRes    runtime.CancelResult
+	cancelErr    error
+	sawCancelTn  event.TenantID
+	sawCancelID  string
+	sawCancelWhy string
+
 	// live is handed back by Observe. A test writes to it to force an append into the
 	// subscribe→replay window (so a naive replay would double-deliver).
 	live chan event.Event
@@ -49,6 +56,10 @@ func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (ru
 func (f *fakeRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, input string) error {
 	f.sawSendTn, f.sawSendLoop, f.sawSendIn = tenant, loopID, input
 	return f.sendErr
+}
+func (f *fakeRuntime) Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (runtime.CancelResult, error) {
+	f.sawCancelTn, f.sawCancelID, f.sawCancelWhy = tenant, loopID, reason
+	return f.cancelRes, f.cancelErr
 }
 func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
