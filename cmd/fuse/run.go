@@ -310,6 +310,7 @@ func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate 
 func applyRunGuards(a *agent.Agent, cfg config.Config) {
 	a.SetNoProgressCalls(cfg.NoProgressCalls)
 	a.SetMaxRunTokens(cfg.MaxRunTokens)
+	a.SetFinishCheck(cfg.FinishCheck)
 }
 
 // applyToolTimeout installs the configured per-leaf-tool-call timeout. A zero
