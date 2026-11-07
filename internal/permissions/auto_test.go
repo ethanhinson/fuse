@@ -354,10 +354,15 @@ func TestAutoMode_Unparseable_AsksNotClassifier(t *testing.T) {
 }
 
 func TestAutoMode_NonBashSafeTool_AutoApprovesViaSafeList(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
 	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
 		approve, called := newApproveRecorder(false)
 		g := New(autoCfg(config.AutoConfig{}, nil, nil),
-			newTestRegistry(name), Human(approve), WithWorkspaceRoot(t.TempDir()))
+			newTestRegistry(name), Human(approve), WithWorkspaceRoot(root))
 		res := g.Execute(context.Background(), name, `{}`)
 		if res.IsError {
 			t.Fatalf("non-bash safe tool %q should auto-approve, got: %s", name, res.Output)
