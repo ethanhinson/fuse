@@ -72,6 +72,13 @@ type Scheduler struct {
 	// budget enforced). The "used" side of the budget is derived from the tree's
 	// (append-only) node count, so only the ceiling lives here.
 	maxSpawns int
+	// reservedSpawns counts spawn-budget reservations taken but not yet
+	// fulfilled by a tree node (reserveSpawn). It closes the check-then-act
+	// window between the budget check in Spawn and the node's addNode deep in
+	// spawnLocal: concurrent same-turn spawns each consume budget atomically at
+	// admission, so a parallel batch cannot collectively overshoot maxSpawns.
+	// Guarded by mu.
+	reservedSpawns int
 	// sessionTokens is the global lifetime token ceiling for the whole session
 	// (throughput.session_tokens, change 0036). 0 = unset (no ceiling enforced).
 	// Measured against the whole-tree token sum (tree.SessionTokens, root
@@ -151,6 +158,46 @@ func (s *Scheduler) SpawnBudget() (used, max int) {
 	max = s.maxSpawns
 	s.mu.Unlock()
 	return used, max
+}
+
+// reserveSpawn atomically takes one unit of the tree-global spawn budget, or refuses
+// when none is left. It is the atomic counterpart of the queue bound's under-lock
+// enqueue check (SF-1): concurrent same-turn spawns cannot all read "room left" and
+// overshoot the ceiling the way a plain SpawnBudget read could.
+//
+// The reservation counts until commitSpawn turns it into a tree node or releaseSpawn
+// gives it back. A child that runs and later fails has still consumed budget, because
+// its node stays in the tree. A spawn refused before it had a node has not.
+func (s *Scheduler) reserveSpawn() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.maxSpawns > 0 && s.tree.childCount()+s.reservedSpawns >= s.maxSpawns {
+		used := s.tree.childCount() + s.reservedSpawns
+		return fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, s.maxSpawns)
+	}
+	s.reservedSpawns++
+	return nil
+}
+
+// commitSpawn turns a reservation into a tree node. add runs under the same lock as
+// reserveSpawn's count, so no reader can see the spawn as both a node and a reservation
+// and wrongly refuse a batch that fits the budget.
+func (s *Scheduler) commitSpawn(add func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	add()
+	if s.reservedSpawns > 0 {
+		s.reservedSpawns--
+	}
+}
+
+// releaseSpawn gives back a reservation for a spawn refused before it had a node.
+func (s *Scheduler) releaseSpawn() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reservedSpawns > 0 {
+		s.reservedSpawns--
+	}
 }
 
 // sessionTokenCeiling returns the configured global session token ceiling (0 =

@@ -232,6 +232,12 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	if d, err := time.ParseDuration(cfg.Gateway.RequestTimeout); err == nil && d > 0 {
 		a.RequestTimeout = d
 	}
+	if cfg.Gateway.MaxAttempts > 0 {
+		a.MaxAttempts = cfg.Gateway.MaxAttempts
+	}
+	if d, err := time.ParseDuration(cfg.Gateway.RetryBackoff); err == nil {
+		a.RetryBackoff = d
+	}
 	if gate != nil {
 		a = a.WithRateGate(gate)
 	}
@@ -452,6 +458,11 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
 		return nil, err
 	}
+
+	// Wire a per-agent file tracker so write_file refuses to overwrite files
+	// this agent has not read, and edit_file detects staleness.
+	toolReg.WithFileTracker(tools.NewFileTracker())
+
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	if strings.HasPrefix(mc.ID, "cli/") {
 		fuseExe, err := os.Executable()
@@ -642,6 +653,11 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
 		return nil, "", err
 	}
+
+	// Wire a per-agent file tracker so write_file refuses to overwrite files
+	// this agent has not read, and edit_file detects staleness.
+	toolReg.WithFileTracker(tools.NewFileTracker())
+
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	// buildAgentCore is the single chokepoint both gate construction and
 	// prompt composition flow through: drop the spawn_agent instructions for an

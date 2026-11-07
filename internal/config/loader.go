@@ -322,6 +322,18 @@ func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[
 		}
 		c.Gateway.RequestTimeout = raw.Gateway.RequestTimeout
 	}
+	if raw.Gateway.MaxAttempts < 0 {
+		return fmt.Errorf("%s: gateway.max_attempts %d is negative", path, raw.Gateway.MaxAttempts)
+	}
+	if raw.Gateway.MaxAttempts != 0 {
+		c.Gateway.MaxAttempts = raw.Gateway.MaxAttempts
+	}
+	if raw.Gateway.RetryBackoff != "" {
+		if d, err := time.ParseDuration(raw.Gateway.RetryBackoff); err != nil || d < 0 {
+			return fmt.Errorf("%s: gateway.retry_backoff %q is not a duration (e.g. \"2s\")", path, raw.Gateway.RetryBackoff)
+		}
+		c.Gateway.RetryBackoff = raw.Gateway.RetryBackoff
+	}
 	// A present max_turns (including an explicit 0) overrides; an omitted key
 	// (nil) leaves the unset default for the call site to resolve. (0038)
 	if raw.MaxTurns != nil {

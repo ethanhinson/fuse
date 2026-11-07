@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"sort"
@@ -35,8 +36,13 @@ const (
 	// response that is still arriving is not stalled. A binding with nobody there
 	// to cancel sets RequestTimeout itself.
 	defaultStreamIdleTimeout = 10 * time.Minute
-	defaultMaxAttempts       = 3
-	defaultRetryBackoff      = time.Second
+	// Six attempts span about half a minute, which outlasts a gateway restart or a
+	// short rate-limit window. An unattended run has nobody to press retry.
+	defaultMaxAttempts  = 6
+	defaultRetryBackoff = time.Second
+	maxRetryBackoff     = 30 * time.Second
+	// maxRetryAfter caps an honored Retry-After, so a bad header cannot stall a run.
+	maxRetryAfter = 2 * time.Minute
 )
 
 // defaultGatewayClient bounds connection setup and the wait for response
@@ -102,7 +108,8 @@ type Adapter struct {
 	StreamIdleTimeout time.Duration
 	// MaxAttempts is the total number of tries (1 = no retries).
 	MaxAttempts int
-	// RetryBackoff is the base sleep between attempts (grows linearly).
+	// RetryBackoff is the base sleep between attempts. It doubles each attempt up to
+	// maxRetryBackoff, with jitter so replicas of a failure do not retry in step.
 	RetryBackoff time.Duration
 
 	// gate, when non-nil, smooths dispatch to the configured rpm/tpm budget.
@@ -432,6 +439,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
 		resp, err, retryable := a.completeOnce(ctx, body, req.Tools)
+		if err == nil && replyEmpty(resp) {
+			resp = a.completeUnstreamed(ctx, payload, req.Tools, resp)
+		}
 		if err == nil {
 			// Reconcile the pre-dispatch estimate with the gateway's reported usage so
 			// the tpm axis reflects real spend without double-charging the estimate
@@ -452,8 +462,13 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		}
 		a.tracef("RETRY", fmt.Appendf(nil, "model=%s attempt %d/%d payload=%dKB elapsed=%s: %v",
 			req.Model, attempt, maxAttempts, len(body)>>10, time.Since(start).Round(time.Second), err))
+		wait := retryDelay(a.RetryBackoff, attempt)
+		var limited *retryAfterError
+		if errors.As(err, &limited) && limited.after > wait {
+			wait = limited.after
+		}
 		select {
-		case <-time.After(a.RetryBackoff * time.Duration(attempt)):
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return CompletionResp{}, ctx.Err()
 		}
@@ -466,6 +481,82 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		req.Model, attempts, time.Since(start).Round(time.Second), len(body)>>10, len(body)/4/1000, lastErr)
 	a.tracef("ERROR", []byte(finalErr.Error()))
 	return CompletionResp{}, finalErr
+}
+
+// retryDelay is the jittered wait before the retry after attempt: half the doubled
+// backoff is fixed and half random.
+func retryDelay(base time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	d := base
+	for i := 1; i < attempt && d < maxRetryBackoff; i++ {
+		d *= 2
+	}
+	if d > maxRetryBackoff {
+		d = maxRetryBackoff
+	}
+	return d/2 + rand.N(d/2+1)
+}
+
+// retryAfterError carries the wait a server asked for alongside its error.
+type retryAfterError struct {
+	after time.Duration
+	err   error
+}
+
+func (e *retryAfterError) Error() string { return e.err.Error() }
+func (e *retryAfterError) Unwrap() error { return e.err }
+
+// parseRetryAfter reads a Retry-After header in seconds or as an HTTP date, capped
+// at maxRetryAfter. Anything unusable or already past returns 0.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	var d time.Duration
+	if secs, err := strconv.Atoi(v); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if at, err := http.ParseTime(v); err == nil {
+		d = at.Sub(now)
+	}
+	if d <= 0 {
+		return 0
+	}
+	if d > maxRetryAfter {
+		return maxRetryAfter
+	}
+	return d
+}
+
+// replyEmpty reports a reply with nothing the agent can use. A reply cut off at the
+// output cap is excluded: the agent loop raises the cap for that, and asking again at
+// the same cap would only repeat it.
+func replyEmpty(r CompletionResp) bool {
+	return strings.TrimSpace(r.Content) == "" && len(r.ToolCalls) == 0 && r.FinishReason != "length"
+}
+
+// completeUnstreamed asks once more without streaming after a streamed reply came
+// back empty. Some gateway routes end a reasoning stream early with a normal stop
+// and [DONE] while the same request answers fully when buffered, so the empty stream
+// says nothing about the model. It returns the original reply if this fails too, and
+// the agent loop decides what to do about an empty reply.
+func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools []ToolSchema, empty CompletionResp) CompletionResp {
+	payload.Stream = false
+	payload.StreamOptions = nil
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return empty
+	}
+	a.tracef("RETRY", []byte("empty streamed reply; asking again without streaming"))
+	a.tracef("REQ", prettyJSON(body))
+	resp, err, _ := a.completeOnce(ctx, body, tools)
+	if err != nil {
+		a.tracef("ERROR", []byte(err.Error()))
+		return empty
+	}
+	return resp
 }
 
 // completeOnce performs a single bounded request attempt. retryable reports
@@ -499,9 +590,11 @@ func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSch
 	if res.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(res.Body)
 		a.tracef("RESP", prettyJSON(raw))
-		return CompletionResp{},
-			fmt.Errorf("gateway status %d: %s", res.StatusCode, strings.TrimSpace(string(raw))),
-			retryableStatus(res.StatusCode)
+		statusErr := fmt.Errorf("gateway status %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+		if after := parseRetryAfter(res.Header.Get("Retry-After"), time.Now()); after > 0 {
+			statusErr = &retryAfterError{after: after, err: statusErr}
+		}
+		return CompletionResp{}, statusErr, retryableStatus(res.StatusCode)
 	}
 
 	// Branch on the response shape: a streamed (text/event-stream) body is
@@ -604,6 +697,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	var order []int
 	var finishReason string
 	var usage wireUsage
+	sawDone := false
 
 	sc := bufio.NewScanner(body)
 	// Allow long SSE lines (a single delta can carry a large tool-call arg).
@@ -615,6 +709,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 		var chunk wireStreamChunk
@@ -655,6 +750,11 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	}
 	if serr := sc.Err(); serr != nil {
 		return CompletionResp{}, fmt.Errorf("read gateway stream: %w", serr), true
+	}
+	// A body that closes cleanly with neither terminator is a lost response. Taking
+	// it as complete would make half an answer the run's final, successful output.
+	if !sawDone && finishReason == "" {
+		return CompletionResp{}, errors.New("gateway stream ended before the reply finished"), true
 	}
 
 	out := CompletionResp{

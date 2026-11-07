@@ -312,11 +312,18 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err
 	}
 	// Tree-global spawn budget backstop. The injected budget line should make
 	// this rare; the refusal makes runaway fan-out impossible. Only enforced
-	// when a budget is configured (max > 0).
+	// when a budget is configured (max > 0). The unit is reserved atomically so
+	// parallel spawn_agent calls in one response cannot overshoot together. Every
+	// refusal below gives it back; spawnLocal converts it into a node.
 	if s.tree != nil {
-		if used, max := s.tree.SpawnBudget(); max > 0 && used >= max {
-			return AgentHandle{}, fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, max)
+		if err := s.tree.Scheduler().reserveSpawn(); err != nil {
+			return AgentHandle{}, err
 		}
+		defer func() {
+			if err != nil {
+				s.tree.Scheduler().releaseSpawn()
+			}
+		}()
 		// Queue-bound backstop (change 0036): a spawn that commits within a turn
 		// while its pool queue has since filled to the bound is refused rather than
 		// growing the queue past ceil(queue_bound × pool slots). The per-turn strip
@@ -406,7 +413,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 	// it. (Was: addNode then SetCancel, leaving a nil-cancel window.)
 	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 	if s.tree != nil {
-		s.tree.addNode(node)
+		s.tree.Scheduler().commitSpawn(func() { s.tree.addNode(node) })
 		s.tree.Emit(TreeUpdate{NodeID: node.ID})
 	}
 

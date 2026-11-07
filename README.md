@@ -323,6 +323,20 @@ agents:
                         # value is clamped back to the default.
 ```
 
+### Gateway retries
+
+```yaml
+gateway:
+  max_attempts: 6     # total tries per model request; 1 means no retries
+  retry_backoff: 1s   # base wait; doubles each attempt up to 30s, with jitter
+```
+
+Transport errors, timeouts, 429s and 5xx responses are retried, and a stream that ends
+without finishing counts as a failure. A `Retry-After` header is honored up to 2 minutes.
+A streamed reply with no text and no tool call gets one retry without streaming, because
+some gateway routes end a reasoning stream early. If replies stay empty, the agent asks
+twice more and then the run fails with a nonzero exit.
+
 ### The `instructions` config key
 
 ```yaml

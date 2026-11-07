@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -44,7 +45,6 @@ func Test429WithoutRetryAfter_RetriedThenSucceeds(t *testing.T) {
 }
 
 func Test429RetryAfter_Honored(t *testing.T) {
-	defect(t, "Retry-After is ignored: 429 retried after a fixed 1s backoff (internal/model/adapter.go:456)")
 	t.Parallel()
 	srv := newServer(t, status(429, `{"error":"slow"}`, "Retry-After", "3"), text("recovered"))
 	h := newHarness(t, srv)
@@ -148,7 +148,6 @@ func TestStreamCutPersistent_Nonzero(t *testing.T) {
 // A proxy that closes the stream cleanly (terminating chunk, no [DONE], no
 // finish_reason) is the same lost response as a dropped connection.
 func TestStreamCleanEOFWithoutDone_NotTreatedAsComplete(t *testing.T) {
-	defect(t, "SSE EOF with no [DONE] and no finish_reason is accepted as a complete reply; run exits 0 on partial text (internal/model/adapter.go:656)")
 	t.Parallel()
 	partial := func(w http.ResponseWriter, r *http.Request) {
 		sseHeader(w)
@@ -294,7 +293,6 @@ func TestFinishReasonLength_CutToolCall_NotExecuted(t *testing.T) {
 }
 
 func TestEmptyReply_FailsRun(t *testing.T) {
-	defect(t, "an empty 200 reply (no content, no tool calls) ends the run with exit 0 and no output (internal/agent/loop.go:676-709)")
 	t.Parallel()
 	for name, st := range map[string]step{
 		"finish_stop": func(w http.ResponseWriter, r *http.Request) {
@@ -429,4 +427,30 @@ func TestToolCallsAsOtherTextDialects_EndRunUnexecuted_Documented(t *testing.T) 
 			}
 		})
 	}
+}
+
+// A reasoning model's empty reply must not end the run when asking again works.
+func TestEmptyReply_RecoversOnRetry(t *testing.T) {
+	t.Parallel()
+	empty := func(w http.ResponseWriter, r *http.Request) {
+		sseHeader(w)
+		sse(w, finishChunk("stop"))
+		sse(w, usageChunk(10, 0))
+		done(w)
+	}
+	var mu sync.Mutex
+	n := 0
+	srv := newRouter(t, func(*request) step {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		if n == 1 {
+			return empty
+		}
+		return text("recovered")
+	})
+	h := newHarness(t, srv)
+	r := h.run()
+	wantCode(t, r, 0)
+	wantContains(t, r.stdout, "recovered", "stdout")
 }

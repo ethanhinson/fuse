@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/ethanhinson/fuse/internal/archive"
 )
@@ -79,7 +80,24 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	defer r.Close()
-	return renderRead(ctx, a.Path, r, size, a)
+	res := renderRead(ctx, a.Path, r, size, a)
+
+	// Track the read in the file tracker for filesystem paths (not art:// refs).
+	// Only track successful reads: errors mean the content was not delivered.
+	if !handled && !res.IsError {
+		if ft := FileTrackerFrom(ctx); ft != nil {
+			// A read is "full" when no range was specified. A partial read does NOT
+			// authorize overwrite but DOES count for the edit_file staleness check.
+			full := a.StartLine == 0 && a.EndLine == 0
+			if canonical, err := resolvePath(a.Path); err == nil {
+				if fi, statErr := os.Stat(canonical); statErr == nil {
+					ft.MarkRead(canonical, full, fi.ModTime(), fi.Size())
+				}
+			}
+		}
+	}
+
+	return res
 }
 
 // renderRead applies the binary refusal and line-range windowing shared by
