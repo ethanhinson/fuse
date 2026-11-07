@@ -52,6 +52,11 @@ type Registry struct {
 	// it, and Execute stamps it onto every tool's context so file tools can
 	// resolve art:// refs. The zero value means "unbound" (truncate only).
 	art artifact.Binding
+	// ft is the per-agent file tracker that guards write_file overwrite and
+	// edit_file staleness checks. Each agent gets its own tracker; a child
+	// spawns a new tracker (nil means no file-tracking — the tools behave as
+	// before).
+	ft *FileTracker
 }
 
 // NewRegistry returns an empty registry.
@@ -137,6 +142,17 @@ func (r *Registry) Schemas() []model.ToolSchema {
 	return out
 }
 
+// WithFileTracker binds a per-agent file tracker to this registry so
+// write_file, edit_file, and read_file track reads and writes per agent.
+// Each agent gets its own tracker; nil means no tracking (tools behave as
+// before). Returns r for chaining.
+func (r *Registry) WithFileTracker(ft *FileTracker) *Registry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ft = ft
+	return r
+}
+
 // Execute runs the named tool, returning an error Result if it is unknown.
 // Oversized outputs are spill-truncated centrally (head+tail inline, full
 // output to a spill artifact in the loop's store) so no single result can flood the
@@ -147,6 +163,7 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) 
 	r.mu.RLock()
 	t, ok := r.byName[name]
 	b := r.art
+	ft := r.ft
 	r.mu.RUnlock()
 	if !ok {
 		return Result{IsError: true, Output: fmt.Sprintf("unknown tool %q", name)}
@@ -162,6 +179,9 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) 
 	}()
 	if b.Valid() {
 		ctx = artifact.WithBinding(ctx, b)
+	}
+	if ft != nil {
+		ctx = WithFileTracker(ctx, ft)
 	}
 	res = t.Execute(ctx, args)
 	res.Output = spillOutput(ctx, b, name, res.Output)
@@ -182,6 +202,7 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 	defer r.mu.RUnlock()
 	out := NewRegistry()
 	out.art = r.art
+	// The child gets its own tracker (nil) — per-agent isolation.
 	var unknown []string
 	for _, n := range names {
 		if t, ok := r.byName[n]; ok {
@@ -194,6 +215,7 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 }
 
 // Clone returns a shallow copy of the registry with the same tool references.
+// The clone gets its own file tracker (nil) so parent and child state are isolated.
 func (r *Registry) Clone() *Registry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
