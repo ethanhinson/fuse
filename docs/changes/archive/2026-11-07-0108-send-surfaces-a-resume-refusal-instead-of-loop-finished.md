@@ -2,12 +2,12 @@
 id: 108
 slug: 'send-surfaces-a-resume-refusal-instead-of-loop-finished'
 title: 'Send surfaces a resume refusal instead of loop finished'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [102]
@@ -42,3 +42,7 @@ Send discards Resume's error, so a client whose loop depended on loop-scoped sec
 ## Out of scope
 
 - Making such loops resumable.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Depends on harness validation and loop-scoped secrets, both being removed.
