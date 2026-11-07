@@ -22,6 +22,28 @@ func TestModelsSubcommandLists(t *testing.T) {
 	}
 }
 
+func TestRemovedSubcommandsFailWithoutRunningATask(t *testing.T) {
+	// A broken config proves the refusal happens before config load and so before
+	// any model could be reached.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte("{not yaml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"loop-serve-net", "loop-server", "healthcheck", "steer", "orchestrate"} {
+		var out, errb bytes.Buffer
+		if code := run([]string{name, "--addr", "127.0.0.1:1"}, &out, &errb); code != 2 {
+			t.Errorf("%s: exit = %d, want 2; stderr=%s", name, code, errb.String())
+		}
+		if !strings.Contains(errb.String(), "was removed") {
+			t.Errorf("%s: stderr = %q, want a removal message", name, errb.String())
+		}
+	}
+}
+
 func TestNoTaskIsUsageError(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var out, errb bytes.Buffer

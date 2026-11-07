@@ -13,8 +13,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // shellInjected are variables the shell itself creates in its own child
@@ -28,8 +26,8 @@ var shellInjected = map[string]bool{
 	"_":      true,
 }
 
-func testPrincipal() loopauth.Principal {
-	return loopauth.Principal{Tenant: "t-1", Subject: "s-1"}
+func testPrincipal() Principal {
+	return Principal{Tenant: "t-1", Subject: "s-1"}
 }
 
 // acquireHost is the common setup: a host Runner for the test principal over
@@ -340,11 +338,11 @@ func TestHostReleaseIsNoOp(t *testing.T) {
 // construction — two principals never share a Runner instance.
 func TestHostAcquirePerPrincipalRunners(t *testing.T) {
 	h := newHostHandler()
-	a, err := h.Acquire(context.Background(), loopauth.Principal{Tenant: "t-a", Subject: "s-a"}, Env{})
+	a, err := h.Acquire(context.Background(), Principal{Tenant: "t-a", Subject: "s-a"}, Env{})
 	if err != nil {
 		t.Fatalf("Acquire a: %v", err)
 	}
-	b, err := h.Acquire(context.Background(), loopauth.Principal{Tenant: "t-b", Subject: "s-b"}, Env{})
+	b, err := h.Acquire(context.Background(), Principal{Tenant: "t-b", Subject: "s-b"}, Env{})
 	if err != nil {
 		t.Fatalf("Acquire b: %v", err)
 	}

@@ -6,8 +6,6 @@ import (
 	"os/exec"
 	"sort"
 	"sync"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // HandlerHost is the bounded handler identifier for the host substrate. It is a
@@ -36,7 +34,7 @@ func (*hostHandler) Name() string { return HandlerHost }
 // on the host, so this never fails; the returned Runner is a fresh value per
 // call so that no two principals can ever share one (the Runner is the thing a
 // pool keys and hands out, and identity is how that key is enforced).
-func (*hostHandler) Acquire(_ context.Context, p loopauth.Principal, env Env) (Runner, error) {
+func (*hostHandler) Acquire(_ context.Context, p Principal, env Env) (Runner, error) {
 	return &hostRunner{
 		principal: p,
 		// Render once, at Acquire, from the env the caller resolved. The
@@ -51,7 +49,7 @@ type hostRunner struct {
 	// principal is fixed at Acquire and never reassigned: a Runner belongs to
 	// exactly one principal for its whole life, which is what lets the warm
 	// pool re-assert ownership on checkout (see acquiredFor).
-	principal loopauth.Principal
+	principal Principal
 
 	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
 	// while a previous Exec may still be unwinding, so the environment is not
@@ -67,7 +65,7 @@ type hostRunner struct {
 // acquiredFor reports the principal this Runner was acquired for, so a pool can
 // verify — against the Runner itself, not only against its own bookkeeping —
 // that it is about to hand the right context to the right principal.
-func (r *hostRunner) acquiredFor() loopauth.Principal { return r.principal }
+func (r *hostRunner) acquiredFor() Principal { return r.principal }
 
 // ResetEnv re-applies a freshly resolved environment to a warm Runner.
 //
@@ -130,8 +128,8 @@ func (r *hostRunner) command(ctx context.Context, cmd string, workingDir string)
 	//
 	// Here there is no boundary for it to escape. The host substrate is reached
 	// only when an operator's trusted-local, file-only off-switch explicitly
-	// authorized uncontained execution on this machine and the hosted posture
-	// is inactive (see selectHandler / hostAuthorized). The command STRING
+	// authorized uncontained execution on this machine (see selectHandler /
+	// hostAuthorized). The command STRING
 	// already runs with this process's filesystem access — `cat ~/.aws/
 	// credentials` needs no working_dir at all — so constraining Dir would
 	// remove no capability the model does not already have through the very

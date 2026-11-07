@@ -17,9 +17,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
-	"github.com/ethanhinson/fuse/internal/orchestrator"
 	"github.com/ethanhinson/fuse/internal/permissions"
-	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
 	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
@@ -46,16 +44,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			verbose = true
 		}
 	}
-	// The shell always runs with its tools (change 0116): no_tools is for
-	// one-shot runs and the loop server, so clear it before anything is built.
+	// The shell always runs with its tools (change 0116): no_tools is for one-shot
+	// runs, so clear it before anything is built.
 	cfg = withoutNoTools(cfg, stderr, "the shell")
 
 	// Session observability (change 0061): construct the observe layer ONCE, here,
 	// and thread the resulting observer into every agent the shell builds — root and
-	// children alike. Only the entry point may call newObservability; a binding that
-	// built its own would double-register the Prometheus collectors.
+	// children alike.
 	obsCtx := context.Background()
-	obs, closeObs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stdout, stderr)
+	obs, closeObs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stderr)
 	if !obsOK {
 		return obsCode
 	}
@@ -75,10 +72,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	skillBlock := rootSystemBlock(cfg, set)
 
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE per shell session,
-	// before the first turn. hosted=false — the shell runs the operator's own work
-	// on their own machine, so their off-switch file applies.
-	sb, closeEgress := newSandboxService(cfg, false, stderr)
-	defer closeEgress()
+	// before the first turn.
+	sb := newSandboxService(stderr)
 	toolReg, err := buildSessionRegistryNoMCP(sb, cfg, set.Lookup)
 	if err != nil {
 		fmt.Fprintf(stderr, "session registry error: %v\n", err)
@@ -102,16 +97,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		skillProv = nil
 	}
 
-	// Tool/resource identity propagation (change #52 / #59): resolve the MCP attach
-	// options through the single shared composition-root helper (spec §1) so the
-	// shell wires the egress CredentialSource + complete-mediation gate + posture
-	// log the same way every loop binding does — no binding attaches MCP without it.
-	// The mediator permissions.Option the helper returns is applied to the shell's
-	// per-turn approve gate via buildGate (which calls buildTargetMediator on the
-	// same config); the manager options carry the egress seam. Inert (no source, nil
-	// mediator) when no identity-propagating server is configured.
-	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
-	mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg, mcpOpts...)
+	mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg)
 	if err != nil {
 		log.Printf("mcp provider: %v", err)
 		mcpProv = nil
@@ -249,9 +235,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		defer stopConsumer()
 	}
 
-	// One blackboard per session, shared by every agent in the tree (change 0023).
-	bb := agent.NewBlackboard(tree)
-
 	// Human-messaging substrate (ADR-0022): a per-node message bus, an @handle
 	// registry (root registered up front), and an async advisory router backed by
 	// a cheap model. Children register their handles and receive their own
@@ -292,15 +275,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// with a blanket auto-approve.
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
-	m = m.WithBlackboard(bb)
 	// "n" in the models editor lists what the gateway serves.
 	m = m.WithModelLister(gatewayAdapter(cfg, nil).ListModels)
 	m = m.WithCatalogLister(func(ctx context.Context) ([]model.CatalogModel, error) {
 		return model.FetchOpenRouterCatalog(ctx, model.OpenRouterBaseURL, nil)
 	})
-	// Seed the local authorization identity (change #52) so identity-propagating
-	// MCP tool calls mint a per-call credential from it.
-	m = m.WithToolPrincipal(localPrincipal(cfg))
 	// Segment surface (change 0030): the /agents overlay reads this session's
 	// archived segments for the compaction indicator and "s" show-original.
 	m = m.WithSegments(segment.NewArtifactSource(toolReg.Artifacts()))
@@ -334,25 +313,17 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// human approver.
 	childBaseApprove := permissions.Human(tui.NewTeaApprovalFunc(m.Channel()))
 
-	// Binding #1b (change 0045): the shell routes engine CONSTRUCTION and store
-	// ownership through the in-process Runtime's Deps seam. buildShellRuntimeDeps
-	// wires the child-builder closure (cloned child-builder site 2 of 4) and
-	// registers the root's spawn_agent / blackboard / pipeline tools on toolReg — a
-	// behavior-preserving relocation of the block that lived here. The TUI keeps
-	// ownership of rendering + turn cadence (via the build seam above), human
-	// messaging, the projected-log consumer, and the segment sink (plan NOTE on
-	// shell.go). The Runtime is constructed for seam symmetry / binding-#2 reuse; the
-	// shell continues to open/close its own event store because the TUI — not
-	// StartLoop — drives turns.
-	_ = runtime.New(buildShellRuntimeDeps(shellDepsInput{
-		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree, bb: bb,
+	// The TUI drives turns and owns rendering, human messaging, the projected-log
+	// consumer and the segment sink; this wires the child builder and root spawn_agent.
+	wireShellTools(shellDepsInput{
+		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree,
 		verbose: verbose, skillBlock: skillBlock, sessionMode: sessionMode,
 		humanBus: humanBus, handleReg: handleReg, sessLog: sessLog,
-		traceW: traceW, rateGate: rateGate, logDir: logDir,
+		traceW: traceW, rateGate: rateGate,
 		eventStore: eventStore, segmentSink: segmentSink,
-		childApprove: childBaseApprove, rootApprove: childBaseApprove,
-		observer: obs.observer,
-	}))
+		childApprove: childBaseApprove,
+		observer:     obs.observer,
+	})
 
 	// ask_user: reaches the human through the same TUI channel as approvals, so
 	// the model can pose a structured multiple-choice question and block for the
@@ -365,33 +336,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	defer cancelFlusher()
 	tree.StartDirtyFlusher(flushCtx)
 
-	// /orchestrator: a persistent chat loop on its own model (orchestrator.model, else
-	// the session's) that watches the root agent through the shell's event store and
-	// steers it through the same human bus a typed message uses. It only starts when the
-	// person first talks to it.
-	orchModel := cfg.Orchestrator.Model
-	if orchModel == "" {
-		orchModel = alias
-	}
-	orchTarget := &orchestrator.LocalTarget{
-		Store: eventStore, Bus: humanBus, NodeID: rootNode.ID,
-		BusyFn: func() bool {
-			n := tree.Node(rootNode.ID)
-			return n != nil && n.Snapshot().Status == agent.StatusRunning
-		},
-	}
-	m = m.WithOrchestrator(newShellOrchestrator(flushCtx, m.Channel(), orchTarget,
-		func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
-			// The orchestrator's registry is built fresh, not cloned from toolReg:
-			// bind it to the session's artifacts so its oversized results spill
-			// under ~/.fuse like every other shell loop's, beside the segments its
-			// shared segmentSink archives.
-			b := toolReg.Artifacts()
-			orchTools.WithArtifacts(b.Store, b.Tenant, b.Loop)
-			return buildChildAgent(cfg, reg, orchModel, r, orchestrator.SystemPrompt(), orchTools,
-				childBaseApprove, traceW, "orchestrator", sessionMode, true, rateGate, segmentSink)
-		}))
-
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	// Pump agent events, tree updates, and registry reloads into the program.
 	// Program.Send is safe before Run (it blocks until the loop consumes) and
@@ -402,95 +346,4 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		return 1
 	}
 	return 0
-}
-
-// setupLocalObservability builds the session-shared observe layer for a LOCAL
-// entry point (`fuse shell`, one-shot `fuse <task>`, research-probe). It is the
-// ONLY place those entry points may call newObservability: a binding that built
-// its own would break the one-observer-per-session rule and double-register the
-// Prometheus collectors.
-//
-// It differs from loop-serve-net in exactly one deliberate way (change 0061,
-// settled decision 1): a metrics-endpoint bind failure warns on stderr and lets
-// the run continue, because observability must never keep a local run from
-// starting. An INVALID observability config still fails startup fast
-// (decision 2) rather than silently degrading to a noop observer.
-//
-// logSink is where the structured (JSONL) logger writes when logging is enabled
-// and logging.output is not "file". It MUST NOT be a writer some other component
-// owns exclusively: the shell's TUI paints the alt screen on stdout, so the shell
-// passes stderr here while the non-TUI entry points pass stdout.
-//
-// label prefixes the diagnostics so the operator sees which entry point spoke.
-// The returned bool reports whether startup may proceed; when it is false the
-// caller must return the accompanying exit code.
-//
-// The second return is the matching TEARDOWN (change 0061 review): the shutdown
-// budget, the stderr warning, and the label prefix live HERE, next to the
-// construction, instead of being copied into each entry point — so a fourth local
-// entry point gets teardown by construction. Callers `defer` it immediately after
-// the ok check, which covers every later early return. It is always non-nil (a
-// no-op on the failure path), so deferring it is unconditionally safe.
-func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, func(), int, bool) {
-	// newObservability opens with cfg.Validate(), but that is defense-in-depth
-	// here: main.go's run() already calls cfg.Validate() for every subcommand
-	// before dispatch (main.go:38), so in production an invalid config exits
-	// there and never reaches this call. This branch is live only for tests
-	// that call this helper directly with a hand-built config.
-	obs, err := newObservability(ctx, cfg, logSink)
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
-		return nil, func() {}, 1, false
-	}
-	closeObs := func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if cerr := obs.Close(sctx); cerr != nil {
-			fmt.Fprintf(stderr, "%s: observability shutdown: %v\n", label, cerr)
-		}
-	}
-	// Verifier is nil: operator auth for a local scrape endpoint is an explicit
-	// non-goal, so a local run that opts into metrics must use access: public.
-	// access: authenticated with a nil verifier would still BIND, and then 401
-	// every scrape forever (authenticatedHTTP rejects unconditionally without a
-	// verifier), so refuse to open an unserviceable listener and say why. Same
-	// warn-and-continue posture as a bind failure: observability never blocks a
-	// local run. Guarded on Bind so an unbound or disabled metrics config stays
-	// byte-identically silent.
-	if obs != nil && obs.metrics != nil && cfg.Observability.Metrics.Bind != "" && cfg.Observability.Metrics.Access == "authenticated" {
-		fmt.Fprintf(stderr, "%s: metrics endpoint disabled: local runs require access: public (continuing)\n", label)
-		return obs, closeObs, 0, true
-	}
-	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
-	// configured, so there is no outer guard to duplicate here.
-	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
-		fmt.Fprintf(stderr, "%s: metrics endpoint: %v (continuing)\n", label, err)
-	}
-	return obs, closeObs, 0, true
-}
-
-// setupShellObservability is setupLocalObservability under the shell's label,
-// with one shell-specific difference: the structured log sink is stderr, never
-// stdout. runShell hands stdout to bubbletea (tea.WithOutput) and the TUI owns
-// that writer for the whole session, so routing JSONL there would interleave log
-// lines into the alt screen and corrupt the display. The `stdout` parameter is
-// therefore accepted and deliberately not used as a sink.
-func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, func(), int, bool) {
-	_ = stdout
-	obs, closeObs, code, ok := setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
-	// Keep the OTEL SDK's own diagnostics (batch-export failures, OTLP retry
-	// warnings) off the terminal: runShell hands stdout to bubbletea and both
-	// std streams share the TTY, so an async export error written to stderr shears
-	// the alt screen mid-render. Route them to the structured log file when one is
-	// configured, else discard — they are non-fatal and already counted as metrics.
-	if ok {
-		var sink io.Writer = io.Discard
-		if lg := cfg.Observability.Logging; lg.Enabled && lg.Output == "file" && lg.File != "" {
-			if f, err := os.OpenFile(lg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-				sink = f
-			}
-		}
-		installOTELDiagnostics(sink)
-	}
-	return obs, closeObs, code, ok
 }

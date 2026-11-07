@@ -2,16 +2,13 @@
 // .fuse.local.yml, falling back to a built-in default registry when absent.
 package config
 
-import "time"
-
 // Gateway describes the LiteLLM gateway endpoint.
 type Gateway struct {
 	URL string `yaml:"url"`
 	Key string `yaml:"key"`
 	// RequestTimeout bounds ONE gateway attempt (connect through the full
 	// streamed body) as a Go duration string ("5m", "20m"). Empty means no limit
-	// on total time for a local run and 30m on a hosted loop server, where nobody
-	// can cancel a call that never ends. Reasoning models can stream 30k–60k
+	// on total time. Reasoning models can stream 30k–60k
 	// thinking tokens before their first visible byte, so a slow response is not
 	// a failure; a silent one ends through the adapter's idle timeout. Not a credential or permission surface, so it is
 	// honored from .fuse.local.yml as well (the worst case is a longer wait).
@@ -33,13 +30,13 @@ type ModelConfig struct {
 	// none, minimal, low, medium, high or xhigh. Empty sends nothing and leaves
 	// the provider's default. Providers differ in how they honour it.
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty"`
-	// Operator display metadata advertised by GetCapabilities (change 0086);
+	// Operator display metadata shown by the model listings (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
 	// long-context; other strings pass through.
 	Label       string   `yaml:"label,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
-	// Advertise false hides the entry from GetCapabilities; nil means advertised.
+	// Advertise false hides the entry from the model listings; nil means advertised.
 	Advertise *bool `yaml:"advertise,omitempty"`
 }
 
@@ -51,33 +48,10 @@ type ModelsConfig struct {
 	Entries map[string]ModelConfig
 }
 
-// SkillsConfig is the installed-skills source selection (change 0134). Source
-// names the adapter: "fs" (filesystem directories, the default) or "postgres"
-// (the skills table in the configured Postgres, under the pgstore build).
-// Dirs is the filesystem directory list — empty falls back to
-// skills.DefaultDirs(). Refresh is how often the server bindings reload the
-// source to follow installed-skill changes; a failed refresh keeps the last
-// good set.
+// SkillsConfig selects where installed skills are loaded from. Dirs empty falls
+// back to skills.DefaultDirs().
 type SkillsConfig struct {
-	Source  string   `yaml:"source"`
-	Dirs    []string `yaml:"dirs"`
-	Refresh string   `yaml:"refresh"`
-}
-
-// DefaultSkillsRefresh is the refresh interval used when skills.refresh is
-// unset (change 0134).
-const DefaultSkillsRefresh = 30 * time.Second
-
-// RefreshDuration resolves Refresh; zero duration (unset) means the default.
-func (s SkillsConfig) RefreshDuration() time.Duration {
-	if s.Refresh == "" {
-		return DefaultSkillsRefresh
-	}
-	d, err := time.ParseDuration(s.Refresh)
-	if err != nil || d <= 0 {
-		return DefaultSkillsRefresh
-	}
-	return d
+	Dirs []string `yaml:"dirs"`
 }
 
 // PermissionsConfig controls the HITL gate behaviour.
@@ -144,18 +118,9 @@ type ResearchConfig struct {
 
 // MCPAuthConfig holds authentication settings for an HTTP MCP server.
 //
-// The `type` selects both the transport credential AND the identity-propagation
-// tier (change #52). Identity-propagating types mint a per-call, audience-bound
-// delegation token from the loop initiator's identity (TierOAuth); the legacy
-// types carry a per-server static credential with NO initiator identity
-// (TierStatic). Existing "bearer"/"oauth2" map to TierStatic so nothing breaks.
+// Type selects the credential: none (or unset) sends none; bearer and static send
+// ClientSecret as a bearer token; oauth2 runs the browser flow and caches a token.
 type MCPAuthConfig struct {
-	// Type selects the credential + tier:
-	//   none                        — no credential (transport-open)
-	//   bearer | oauth2 | static    — TierStatic: per-server static credential,
-	//                                 identity-free (the legacy default)
-	//   identity | oauth-exchange   — TierOAuth: per-call RFC 8693 delegation token,
-	//                                 audience-bound to the server's Audience (#52)
 	Type         string   `yaml:"type"`
 	ClientID     string   `yaml:"client_id"`     // optional; absent = dynamic registration
 	ClientSecret string   `yaml:"client_secret"` // optional; used as bearer token for type=bearer
@@ -171,15 +136,6 @@ type MCPServerConfig struct {
 	URL       string            `yaml:"url"`       // http only
 	Env       map[string]string `yaml:"env"`
 	Auth      MCPAuthConfig     `yaml:"auth"` // http only
-
-	// Audience is the RFC 8707 resource identifier a minted delegation token is
-	// bound to when this server is an identity-propagation (TierOAuth) target
-	// (change #52). Required for identity/oauth-exchange auth types; ignored for
-	// static tiers. Sourced from trusted config, never from model output.
-	Audience string `yaml:"audience"`
-	// Scopes are the downstream scopes a minted delegation token requests. Sourced
-	// from config (the tool declaration), never from model output.
-	Scopes []string `yaml:"scopes"`
 }
 
 // SummarizationConfig configures Tier 2 anchored LLM summarization (change
@@ -218,288 +174,11 @@ type ContextConfig struct {
 	Relevance     RelevanceConfig     `yaml:"relevance"`
 }
 
-// PipelineSynthesisConfig holds the caps applied to LLM-synthesized pipelines
-// (change 0026). Each is a synthesis-time brake mapped onto pipeline.Caps: the
-// synthesizer's proposed DAG must fit under these before it is run. 0 = that
-// check skipped (matching pipeline.Caps semantics), though Default() supplies
-// conservative positive values.
-type PipelineSynthesisConfig struct {
-	MaxSteps    int `yaml:"max_steps"`
-	MaxFanout   int `yaml:"max_fanout"`
-	MaxDepth    int `yaml:"max_depth"`
-	MaxAttempts int `yaml:"max_attempts"`
-}
-
-// PipelineConfig groups pipeline-composition knobs (change 0026). Today it holds
-// only the synthesis caps block.
-type PipelineConfig struct {
-	Synthesis PipelineSynthesisConfig `yaml:"synthesis"`
-}
-
-// AuthTokenConfig is one static bearer token→principal mapping for the networked
-// loop-control binding (change 0049). Token is the bearer credential a client
-// presents in `Authorization: Bearer <token>`; Tenant is the isolation boundary
-// the caller acts within; Subject is the authorization subject recorded as a
-// loop's owner. This is the default
-// StaticVerifier surface — richer verifiers (OIDC/JWT, mTLS) slot in behind the
-// same loopauth.Verifier seam without a config re-cut.
-// Tenant is OPTIONAL and remains so. An omitted `tenant:` is collapsed to the
-// _default tenant ONCE, at the trusted authentication edge that builds the
-// Principal from this entry (cmd/fuse's buildLoopVerifier for the networked
-// binding, principalFromConfig for the stdio one), never later and never by the
-// layers that consume a Principal. Two entries that both omit it therefore name
-// ONE tenant: they share a durable event stream, a tool-identity signing key,
-// and — since change 0065 — one bash workspace tree. Give two principals that
-// must be isolated from each other two distinct, explicitly-named tenants.
-//
-// A tenant id also has to be a usable filesystem segment under the hosted
-// bindings: lowercase letters, digits, '-', '_', '.', at most 128 bytes, and it
-// may not START with '.'. An uppercase id is REFUSED rather than folded,
-// because a case-insensitive volume would hand "Acme" and "acme" one directory;
-// a dot-leading id is refused because its workspace tree would be hidden from
-// an operator listing the parent. See internal/tools/sandbox.tenantDirName.
-//
-// Scopes is OPTIONAL and narrows the token to specific RPCs. Omitted means
-// unrestricted (every RPC the principal is otherwise authorized for). Names come
-// from the loopauth scope vocabulary (for example loop:start, loop:send,
-// loop:observe, loop:admin). An unknown name is ignored but still restricts:
-// a non-empty list grants only the scopes it names. An explicitly empty list
-// (`scopes: []`) is a validation problem rather than a silent "unrestricted".
-type AuthTokenConfig struct {
-	Token                 string   `yaml:"token"`
-	Tenant                string   `yaml:"tenant"`
-	Subject               string   `yaml:"subject"`
-	ObservabilityOperator bool     `yaml:"observability_operator"`
-	Scopes                []string `yaml:"scopes"`
-}
-
-// LoopServerConfig configures the networked Connect/protobuf loop-control binding
-// (`fuse loop-serve-net`, change 0049). It is inert for every other binding — the
-// stdio loop-server and the local CLI paths never reach the Connect edge, so they
-// carry no bearer-token requirement and ignore this block entirely.
-//
-//   - Auth is the static token→principal map the default loopauth.StaticVerifier
-//     is built from. When it is empty the composition root synthesizes a single
-//     built-in dev token (mapped to the _default tenant) so local use stays usable
-//     while STILL requiring a bearer token on every request — the binding never
-//     runs unauthenticated. Configure real tokens for any shared/deployed server.
-//   - LeaseTTL is the owner-liveness lease duration threaded into runtime.Deps
-//     (change 0049 Task 7): a live loop's owner renews the lease at ~⅓ TTL, and a
-//     record whose lease has expired is treated as abandoned and re-ownable on a
-//     cold resolve. A duration string (e.g. "30s", "2m"); empty ⇒ the runtime's
-//     built-in default (30s).
-//   - Issuers are trusted token issuers: services that share an HS256 secret with
-//     fuse and mint short-lived bearer tokens naming the subject per request, so
-//     a new user of that service needs no config change or restart here. They
-//     are checked after Auth. Configuring issuers (with or without Auth) turns
-//     the dev-token fallback off.
-//   - Secrets is the operator's allowlist of secrets a harness spec may
-//     reference by name (change 0085): each maps a name to an environment
-//     variable or a file on this host and names the tenants allowed to use it.
-//     With none configured every secret_ref in a spec is refused.
-//   - Limits bounds, per tenant, how many loops a tenant keeps alive and how
-//     fast it starts them (change 0103). A default block applies to every
-//     tenant and per-tenant entries override it axis by axis. Zero (or no
-//     block) means unlimited.
-type LoopServerConfig struct {
-	Auth     []AuthTokenConfig    `yaml:"auth"`
-	Issuers  []IssuerConfig       `yaml:"issuers"`
-	LeaseTTL string               `yaml:"lease_ttl"`
-	Secrets  []SecretSourceConfig `yaml:"secrets"`
-	// SpecPolicy is the operator's floor on what a client's harness spec may
-	// point at (change 0101). Operator-only, like the rest of the block.
-	SpecPolicy SpecPolicyConfig `yaml:"spec_policy"`
-	Limits     LoopLimitsConfig `yaml:"limits"`
-}
-
-// Spec policy model modes.
-const (
-	// SpecModelsAny lets a spec name any gateway model id (the default).
-	SpecModelsAny = "any"
-	// SpecModelsRegistryOnly limits a spec's model ids to the gateway ids of
-	// the operator's advertised registry models.
-	SpecModelsRegistryOnly = "registry-only"
-)
-
-// SpecPolicyConfig is loop_server.spec_policy (change 0101): the egress and
-// model floor applied to every client-supplied harness spec.
-//
-//   - MCPHosts are hostname patterns ("*.example.com" matches subdomains only)
-//     an MCP server or research.custom URL host must match; empty allows any.
-//   - DenyPrivateNetworks refuses loopback, link-local, RFC-1918 and
-//     unique-local, CGNAT (100.64.0.0/10) and NAT64 (64:ff9b::/96) addresses,
-//     hostnames resolving to them, and the localhost, .local, .internal and
-//     .home.arpa names. Nil means true.
-//   - AllowHTTPHosts are hosts where http:// is accepted (same patterns as
-//     MCPHosts); every other URL must be https.
-//   - Models is "any" (default) or "registry-only".
-//   - CarriedSkills accepts skills carried in a spec (SkillRef.body); nil
-//     means true (change 0118).
-//
-// Operator-configured MCP servers are exempt: they are the operator's own.
-type SpecPolicyConfig struct {
-	MCPHosts            []string `yaml:"mcp_hosts"`
-	DenyPrivateNetworks *bool    `yaml:"deny_private_networks"`
-	AllowHTTPHosts      []string `yaml:"allow_http_hosts"`
-	Models              string   `yaml:"models"`
-	CarriedSkills       *bool    `yaml:"carried_skills"`
-}
-
-// DenyPrivate resolves DenyPrivateNetworks, defaulting to true.
-func (p SpecPolicyConfig) DenyPrivate() bool {
-	return p.DenyPrivateNetworks == nil || *p.DenyPrivateNetworks
-}
-
-// CarriedSkillsAllowed resolves CarriedSkills, defaulting to true.
-func (p SpecPolicyConfig) CarriedSkillsAllowed() bool {
-	return p.CarriedSkills == nil || *p.CarriedSkills
-}
-
-// RegistryOnly reports whether spec model ids are limited to the registry.
-func (p SpecPolicyConfig) RegistryOnly() bool { return p.Models == SpecModelsRegistryOnly }
-
-func (p SpecPolicyConfig) isZero() bool {
-	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == "" &&
-		p.CarriedSkills == nil
-}
-
-// LoopLimitsConfig is loop_server.limits (change 0103): per-tenant bounds on
-// how many loops a tenant keeps alive and how fast it starts them. Default
-// applies to every tenant; Tenants overrides it per tenant id, axis by axis
-// (an override axis > 0 replaces the default axis, 0 or omitted inherits it).
-// Zero everywhere means unlimited. Operator-only, trusted-file only.
-type LoopLimitsConfig struct {
-	Default LoopLimitConfig            `yaml:"default"`
-	Tenants map[string]LoopLimitConfig `yaml:"tenants"`
-}
-
-// LoopLimitConfig is one tenant's limits. 0 on an axis means unlimited
-// (in Default) or inherit-the-default (in a Tenants override).
-type LoopLimitConfig struct {
-	MaxLiveLoops    int `yaml:"max_live_loops"`
-	StartsPerMinute int `yaml:"starts_per_minute"`
-}
-
-// Configured reports whether the block carries anything: a non-zero default
-// axis, or any Tenants entry at all. An all-zero Tenants entry still counts so
-// the loader keeps the block and validation sees a bad tenant key.
-func (l LoopLimitsConfig) Configured() bool {
-	return l.Default != (LoopLimitConfig{}) || len(l.Tenants) > 0
-
-}
-
-// SecretSourceConfig is one entry of loop_server.secrets (change 0085): the
-// source of a secret a harness spec names in a secret_ref field. Exactly one of
-// Env (an environment variable of the fuse server process) or File (an absolute
-// path on its host; one trailing newline is trimmed) holds the value. Tenants
-// lists the tenants whose loops may reference it; empty means only the default
-// tenant, the same rule as an issuer's tenants. Hosts binds the secret to its
-// destinations: the URL of the spec field that carries it (the MCP server's url,
-// or research.custom.url) must have one of these hostnames. Without Hosts the
-// spec chooses where the value is sent, so allowing a tenant to use the secret
-// discloses the value to that tenant. Operator-only: it is part of the
-// trusted-only loop_server block, and a spec can never express it.
-type SecretSourceConfig struct {
-	Name    string   `yaml:"name"`
-	Env     string   `yaml:"env"`
-	File    string   `yaml:"file"`
-	Tenants []string `yaml:"tenants"`
-	Hosts   []string `yaml:"hosts"`
-}
-
-// SecretRefPattern is the shape of a secret name, the same pattern
-// fuse.harness.v1 applies to every secret_ref field, so an operator can only
-// declare a name a spec is able to reference.
-const SecretRefPattern = `^[A-Za-z0-9][A-Za-z0-9_./-]*$`
-
-// DefaultIssuerMaxTTL is the longest token lifetime (exp - iat) an issuer
-// accepts when its max_ttl is unset.
-const DefaultIssuerMaxTTL = "1h"
-
-// MinIssuerSigningKeyBytes is the shortest accepted issuer signing key. RFC 7518
-// section 3.2 requires an HS256 key of at least the hash output size, 256 bits.
-const MinIssuerSigningKeyBytes = 32
-
-// IssuerConfig is one trusted token issuer for the networked loop binding
-// (loop_server.issuers). A client presents a compact HS256 JWS as its bearer
-// token; fuse picks the issuer whose Issuer equals the token's "iss", verifies
-// the signature with SigningKey, and checks "aud", "iat", "exp" and "sub". The
-// resulting principal is {tenant claim (omitted means _default), sub}, exactly
-// what a static auth entry would give.
-//
-//   - Issuer must equal the token's "iss" and be unique across issuers.
-//   - Exactly one of SigningKey (HS256 shared secret, at least 32 bytes), JWKS
-//     (inline public JWKs; tokens are ES256/EdDSA selected by kid) or JWKSURL.
-//   - TenantPrefix accepts tenants starting with it in addition to Tenants.
-//   - Audience must equal the token's "aud" (or be one of its entries).
-//   - Tenants are the tenants this issuer may assert. A token naming any other
-//     tenant is refused. Empty means only _default.
-//   - MaxTTL refuses tokens whose exp - iat exceeds it. A Go duration; empty
-//     means DefaultIssuerMaxTTL.
-//   - ObservabilityOperator grants observability_operator to every principal
-//     this issuer produces. No token claim can grant it.
-type IssuerConfig struct {
-	Issuer     string `yaml:"issuer"`
-	SigningKey string `yaml:"signing_key"`
-	// JWKS is an inline list of public keys (kty EC crv P-256, or OKP crv Ed25519).
-	JWKS []IssuerJWK `yaml:"jwks"`
-	// JWKSURL is an https URL of a JWKS document (http only for loopback).
-	JWKSURL string `yaml:"jwks_url"`
-	// JWKSRefresh is the JWKS cache lifetime as a Go duration; empty means 5m.
-	JWKSRefresh string `yaml:"jwks_refresh"`
-	// TenantPrefix additionally accepts any valid tenant id starting with it.
-	TenantPrefix          string   `yaml:"tenant_prefix"`
-	Audience              string   `yaml:"audience"`
-	Tenants               []string `yaml:"tenants"`
-	MaxTTL                string   `yaml:"max_ttl"`
-	ObservabilityOperator bool     `yaml:"observability_operator"`
-}
-
-// IssuerJWK is one public key of an issuer's inline jwks list.
-type IssuerJWK struct {
-	Kid string `yaml:"kid"`
-	Kty string `yaml:"kty"`
-	Crv string `yaml:"crv"`
-	X   string `yaml:"x"`
-	Y   string `yaml:"y"`
-}
-
-// JWKSRefreshDuration resolves JWKSRefresh; zero means the default (5m).
-func (i IssuerConfig) JWKSRefreshDuration() (time.Duration, error) {
-	if i.JWKSRefresh == "" {
-		return 0, nil
-	}
-	return time.ParseDuration(i.JWKSRefresh)
-}
-
-// MaxTTLDuration resolves MaxTTL, applying DefaultIssuerMaxTTL when unset. The
-// error is the parse error; Config.Validate reports it at startup.
-func (i IssuerConfig) MaxTTLDuration() (time.Duration, error) {
-	raw := i.MaxTTL
-	if raw == "" {
-		raw = DefaultIssuerMaxTTL
-	}
-	return time.ParseDuration(raw)
-}
-
-// ObservabilityConfig controls the optional telemetry adapters used by
-// loop-serve-net. Every signal is independently enabled; the zero value keeps
-// observability inert and requires no collector, metrics listener, or log file.
+// ObservabilityConfig controls the optional trace export. The zero value keeps it
+// inert and requires no collector.
 type ObservabilityConfig struct {
-	Metrics     MetricsObservabilityConfig     `yaml:"metrics"`
-	Traces      TracesObservabilityConfig      `yaml:"traces"`
-	Logging     LoggingObservabilityConfig     `yaml:"logging"`
-	Cardinality CardinalityObservabilityConfig `yaml:"cardinality"`
-	InstanceID  string                         `yaml:"instance_id"`
-}
-
-type MetricsObservabilityConfig struct {
-	Enabled          bool                `yaml:"enabled"`
-	Path             string              `yaml:"path"`
-	Bind             string              `yaml:"bind"`
-	Access           string              `yaml:"access"` // authenticated | public
-	HistogramBuckets []float64           `yaml:"histogram_buckets"`
-	Labels           map[string][]string `yaml:"labels"`
+	Traces     TracesObservabilityConfig `yaml:"traces"`
+	InstanceID string                    `yaml:"instance_id"`
 }
 
 type TracesObservabilityConfig struct {
@@ -515,48 +194,15 @@ type TracesObservabilityConfig struct {
 	SampleRatio   float64           `yaml:"sample_ratio"`
 }
 
-type LoggingObservabilityConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	Output         string `yaml:"output"` // stdout | file
-	File           string `yaml:"file"`
-	Level          string `yaml:"level"`
-	MaxOverrideTTL string `yaml:"max_override_ttl"`
-}
-
-type CardinalityDimensionConfig struct {
-	Budget  int      `yaml:"budget"`
-	Pinned  []string `yaml:"pinned"`
-	Catalog []string `yaml:"catalog"`
-}
-
-type CardinalityObservabilityConfig struct {
-	HashVersion string                     `yaml:"hash_version"`
-	Salt        string                     `yaml:"salt"`
-	Tenant      CardinalityDimensionConfig `yaml:"tenant"`
-	Model       CardinalityDimensionConfig `yaml:"model"`
-	Tool        CardinalityDimensionConfig `yaml:"tool"`
-}
-
-// OrchestratorConfig configures the orchestrator: the chat model that watches a running
-// agent and steers it on the person's behalf.
-type OrchestratorConfig struct {
-	// Model is the alias the orchestrator runs on. Empty means the session's current
-	// model. Honored only from the trusted home file: it chooses which model is allowed
-	// to steer your agent, so a repo-planted file must not set it.
-	Model string `yaml:"model"`
-}
-
 // MaxInstructionsChars caps the top-level `instructions` brief, counted in
-// characters (runes), not bytes. It matches the `max_len` on
-// HarnessSpec.instructions.
+// characters (runes), not bytes.
 const MaxInstructionsChars = 16384
 
-// MaxRoles caps the number of top-level roles. It matches the max_pairs rule
-// on HarnessSpec.roles.
+// MaxRoles caps the number of top-level roles.
 const MaxRoles = 32
 
 // MaxRoleNameChars and RoleNamePattern are the rules on a role's name (its
-// key under roles). They match the map key rules on HarnessSpec.roles.
+// key under roles).
 const (
 	MaxRoleNameChars = 64
 	RoleNamePattern  = `^[a-z0-9][a-z0-9_-]*$`
@@ -577,8 +223,7 @@ type RoleConfig struct {
 	Instructions string   `yaml:"instructions"`
 	Tools        []string `yaml:"tools"`
 	Model        string   `yaml:"model"`
-	// NoTools builds the role's child with no tools at all, the blackboard
-	// included. It conflicts with a non-empty Tools.
+	// NoTools builds the role's child with no tools at all. It conflicts with a non-empty Tools.
 	NoTools bool `yaml:"no_tools"`
 }
 
@@ -595,10 +240,8 @@ type Config struct {
 	Gateway    Gateway
 	Models     ModelsConfig
 	SkillPaths []string
-	// Skills configures where the installed skill set comes from (change 0134):
-	// a filesystem directory list or a Postgres table, with a refresh interval
-	// the server bindings use to follow the source. When Dirs is empty the
-	// call site falls back to skills.DefaultDirs().
+	// Skills configures the directories the installed skill set comes from. When
+	// Dirs is empty the call site falls back to skills.DefaultDirs().
 	Skills SkillsConfig
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
@@ -617,8 +260,6 @@ type Config struct {
 	MaxRunTokens int64
 	MaxTokens    int
 	Permissions  PermissionsConfig
-	// Orchestrator configures the steering side-channel (/orchestrator).
-	Orchestrator OrchestratorConfig
 	MCPServers   []MCPServerConfig
 	Research     ResearchConfig
 	Agents       AgentsConfig
@@ -629,90 +270,16 @@ type Config struct {
 	// pre-0036 behavior (no gate, no quota). Parsed and carried here; the rate
 	// gate (Task 5) and session-quota enforcement (Task 6) consume it.
 	Throughput ThroughputConfig
-	// Workflows binds an invocable skill to a spawn policy and worker pool,
-	// keyed by workflow name. Nil/empty ⇒ no workflow behavior (byte-identical
-	// to pre-0034). A skill may embed a default block in its frontmatter; a
-	// config-level entry for the same name overrides it, and .fuse.local.yml may
-	// only TIGHTEN pool numbers, never loosen them (ADR-0006 trust boundary).
-	Workflows map[string]WorkflowConfig
 	// Roles are named helper definitions keyed by role name. Honored from the
-	// home file and a harness spec (an entry replaces any earlier entry with the
-	// same name); inert from .fuse.local.yml, since a role carries a tool set and
+	// home file (an entry replaces any earlier entry with the same name); inert from .fuse.local.yml, since a role carries a tool set and
 	// a model pin.
 	Roles map[string]RoleConfig
 	// Context groups context-management knobs (change 0027). Its summarization
 	// block defaults to Tier 2 on with a 0.85 threshold and 2000-token output
 	// cap; the summarizer stays inert until a Completer is wired at the call
 	// site, so the defaults are behavior-identical to pre-0027 until then.
-	Context ContextConfig
-	// Pipeline holds pipeline-composition knobs (change 0026). Its synthesis
-	// block caps LLM-synthesized DAGs; the untrusted .fuse.local.yml may only
-	// TIGHTEN those caps (ADR-0006), exactly like the workflow pool numbers.
-	Pipeline PipelineConfig
-	// LoopServer configures the networked Connect/protobuf loop-control binding
-	// (change 0049): the static bearer-token→principal verifier map and the
-	// owner-liveness lease TTL. Inert for every other binding. It is a
-	// bearer-credential surface (a token grants access), so it is honored ONLY
-	// from the trusted ~/.fuse/config.yml — a repo-plantable .fuse.local.yml must
-	// not be able to mint or widen credentials (ADR-0006 trust boundary).
-	LoopServer    LoopServerConfig
+	Context       ContextConfig
 	Observability ObservabilityConfig
-	// ToolIdentity configures the tool/resource identity-propagation egress
-	// (change #52): the built-in STS signing key(s) used to mint per-call,
-	// audience-bound delegation tokens for identity-propagating MCP servers, and
-	// the local principal used off the networked binding (CLI/shell). Inert unless
-	// at least one MCP server is configured with an identity/oauth-exchange auth
-	// type. Like LoopServer it is a credential surface (a signing key mints
-	// downstream-trusted tokens), so it is honored ONLY from the trusted
-	// ~/.fuse/config.yml — never from a repo-plantable .fuse.local.yml (ADR-0006).
-	ToolIdentity ToolIdentityConfig
-}
-
-// ToolIdentityConfig configures change #52's identity-propagation egress seam.
-// An empty block leaves the seam un-wired (byte-identical to pre-#52: MCP tools
-// use their static per-server token). It becomes active when the composition
-// root builds a CredentialSource from it — which it does only when at least one
-// MCP server declares an identity-propagating auth type.
-type ToolIdentityConfig struct {
-	// SigningKey is the symmetric key the built-in STS signs local delegation
-	// tokens with, for the default/local tenant. Trusted-config only. When empty,
-	// identity-propagating MCP servers cannot mint and are reported at startup.
-	SigningKey string `yaml:"signing_key"`
-	// TTL is the minted token lifetime (e.g. "5m"); empty ⇒ the STS default.
-	TTL string `yaml:"ttl"`
-	// LocalSubject is the authorization subject stamped as the loop initiator on
-	// the non-networked (CLI/shell) paths, where there is no bearer token to
-	// resolve a Principal from. Empty ⇒ "local". The tenant is the default tenant.
-	LocalSubject string `yaml:"local_subject"`
-}
-
-// WorkflowConfig is one named workflow: the invocable it binds, its subtree
-// spawn pool, and its typed worker definitions. Skill names an invocable
-// resolved by name (v1: embedded/user markdown skills); the field is
-// deliberately form-agnostic so other invocable forms can bind later.
-type WorkflowConfig struct {
-	Skill   string                  `yaml:"skill"`
-	Pool    PoolConfig              `yaml:"pool"`
-	Workers map[string]WorkerConfig `yaml:"workers"`
-	// Roles names the top-level roles that may take part in this workflow.
-	Roles []string `yaml:"roles"`
-}
-
-// PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
-// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and the
-// scheduler's visibility predicate treats a non-positive slot cap.
-//
-//   - Concurrent (reversible): max children running+pending in the subtree.
-//   - Total (permanent): lifetime spawn quota for the subtree.
-//   - MaxDepth (static): spawn depth below the workflow root.
-//   - Tokens (permanent, change 0036): lifetime token quota for the subtree
-//     (0 = unset/unlimited). Exhaustion strips spawn_agent in that subtree only;
-//     accounting and enforcement land in Task 6, this field parses and carries.
-type PoolConfig struct {
-	Concurrent int `yaml:"concurrent"`
-	Total      int `yaml:"total"`
-	MaxDepth   int `yaml:"max_depth"`
-	Tokens     int `yaml:"tokens"`
 }
 
 // ThroughputConfig is the turn-level rate and quota surface (change 0036). Each
@@ -737,20 +304,6 @@ type ProviderThroughput struct {
 	TokensPerMinute   int `yaml:"tokens_per_minute"`
 }
 
-// WorkerConfig is a typed worker: a tool allowlist and an optional model pin
-// (empty: inherit the parent's model). The allowlist is the worker's whole tool
-// set: it must name at least one tool (or set NoTools) and inherits nothing
-// from the parent. A worker-bound child with tools also always receives the
-// five blackboard tools, and it can nest exactly when its allowlist names
-// spawn_agent.
-type WorkerConfig struct {
-	Tools []string `yaml:"tools"`
-	Model string   `yaml:"model"`
-	// NoTools builds the worker-bound child with no tools at all, the
-	// blackboard included. It conflicts with a non-empty Tools.
-	NoTools bool `yaml:"no_tools"`
-}
-
 // AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
 // budget: the total number of child agents a single root turn may create, ever,
 // counted against the append-only AgentTree. It backstops runaway fan-out; the
@@ -769,8 +322,8 @@ type AgentsConfig struct {
 	MaxConcurrent int     `yaml:"max_concurrent"`
 	QueueBound    float64 `yaml:"queue_bound"`
 	// ToolTimeoutSeconds bounds a single leaf tool call (bash, read, web_fetch,
-	// …). 0 selects the agent default (120s). Orchestration tools (spawn_agent,
-	// pipeline_run) are always exempt — they await child agents by design.
+	// …). 0 selects the agent default (120s). spawn_agent is always exempt: it
+	// awaits child agents by design.
 	ToolTimeoutSeconds int `yaml:"tool_timeout_seconds"`
 }
 
@@ -788,52 +341,30 @@ type rawConfig struct {
 	Instructions    string                 `yaml:"instructions"`
 	NoTools         bool                   `yaml:"no_tools"`
 	Permissions     rawPermissionsConfig   `yaml:"permissions"`
-	// Orchestrator is the steering side-channel's model choice (trusted-only).
-	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
-	MCPServers   []MCPServerConfig  `yaml:"mcp_servers"`
-	Research     rawResearchConfig  `yaml:"research"`
-	Agents       rawAgentsConfig    `yaml:"agents"`
+	MCPServers      []MCPServerConfig      `yaml:"mcp_servers"`
+	Research        rawResearchConfig      `yaml:"research"`
+	Agents          rawAgentsConfig        `yaml:"agents"`
 	// Throughput reuses the resolved ThroughputConfig shape on-disk (plain
 	// ints/maps, no free-text scalars — yaml.Unmarshal is safe); the tighten-only
 	// merge happens in mergeFile, not here.
 	Throughput rawThroughputConfig      `yaml:"throughput"`
 	Projects   map[string]ProjectConfig `yaml:"projects"`
-	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
-	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
-	Workflows map[string]WorkflowConfig `yaml:"workflows"`
 	// Roles mirrors Config.Roles on-disk. Descriptions and instructions are free
 	// text; yaml.Unmarshal reads quoted and block scalars exactly.
 	Roles map[string]RoleConfig `yaml:"roles"`
 	// Context mirrors ContextConfig on-disk (change 0027). Its summarization
 	// mirror uses a *bool for enabled so an omitted key keeps the true default
 	// while `enabled: false` takes effect (mirrors RespectRobots).
-	Context rawContextConfig `yaml:"context"`
-	// Pipeline mirrors PipelineConfig on-disk (change 0026). Every cap is a plain
-	// int (0 = unset), so the tighten-only local merge distinguishes an omitted
-	// axis from a present one exactly like the throughput axes; the merge happens
-	// in mergeFile.
-	Pipeline rawPipelineConfig `yaml:"pipeline"`
-	// LoopServer mirrors LoopServerConfig on-disk (change 0049): the bearer
-	// token→principal verifier map and the lease TTL for `loop-serve-net`. It is a
-	// credential surface honored ONLY from the trusted home file (see mergeFile).
-	LoopServer    LoopServerConfig       `yaml:"loop_server"`
+	Context       rawContextConfig       `yaml:"context"`
 	Observability rawObservabilityConfig `yaml:"observability"`
-	// ToolIdentity mirrors ToolIdentityConfig on-disk (change #52): the built-in
-	// STS signing key + local subject for identity-propagation. A credential
-	// surface (the signing key mints downstream-trusted tokens) honored ONLY from
-	// the trusted home file (see mergeFile).
-	ToolIdentity ToolIdentityConfig `yaml:"tool_identity"`
 }
 
 // rawObservabilityConfig preserves YAML presence for trace sample_ratio so an
 // explicit zero can disable root-span sampling while an omitted value receives
 // the resolved default.
 type rawObservabilityConfig struct {
-	Metrics     MetricsObservabilityConfig     `yaml:"metrics"`
-	Traces      rawTracesObservabilityConfig   `yaml:"traces"`
-	Logging     LoggingObservabilityConfig     `yaml:"logging"`
-	Cardinality CardinalityObservabilityConfig `yaml:"cardinality"`
-	InstanceID  string                         `yaml:"instance_id"`
+	Traces     rawTracesObservabilityConfig `yaml:"traces"`
+	InstanceID string                       `yaml:"instance_id"`
 }
 
 type rawTracesObservabilityConfig struct {
@@ -855,29 +386,14 @@ func (o rawObservabilityConfig) resolve() ObservabilityConfig {
 		ratio = *o.Traces.SampleRatio
 	}
 	return ObservabilityConfig{
-		Metrics: o.Metrics,
 		Traces: TracesObservabilityConfig{
 			Enabled: o.Traces.Enabled, Endpoint: o.Traces.Endpoint, Protocol: o.Traces.Protocol,
 			Insecure: o.Traces.Insecure, Headers: o.Traces.Headers, QueueSize: o.Traces.QueueSize,
 			BatchSize: o.Traces.BatchSize, ExportTimeout: o.Traces.ExportTimeout,
 			BatchTimeout: o.Traces.BatchTimeout, SampleRatio: ratio,
 		},
-		Logging: o.Logging, Cardinality: o.Cardinality, InstanceID: o.InstanceID,
+		InstanceID: o.InstanceID,
 	}
-}
-
-// rawPipelineConfig mirrors PipelineConfig on-disk (change 0026).
-type rawPipelineConfig struct {
-	Synthesis rawPipelineSynthesisConfig `yaml:"synthesis"`
-}
-
-// rawPipelineSynthesisConfig mirrors PipelineSynthesisConfig on-disk. Every cap
-// is a plain int: 0 = unset (an omitted axis), a present value is nonzero.
-type rawPipelineSynthesisConfig struct {
-	MaxSteps    int `yaml:"max_steps"`
-	MaxFanout   int `yaml:"max_fanout"`
-	MaxDepth    int `yaml:"max_depth"`
-	MaxAttempts int `yaml:"max_attempts"`
 }
 
 // rawContextConfig mirrors ContextConfig on-disk.
@@ -994,8 +510,8 @@ func Default() Config {
 			},
 		},
 		Agents: AgentsConfig{
-			MaxSpawns:     64,
-			MaxConcurrent: 16,
+			MaxSpawns:     16,
+			MaxConcurrent: 8,
 		},
 		// Tier 2 anchored summarization defaults on (change 0027) with the
 		// documented threshold/output cap. Model empty ⇒ the main model (D4).
@@ -1019,36 +535,5 @@ func Default() Config {
 				BorderlineHi:        0.60,
 			},
 		},
-		// Pipeline synthesis caps (change 0026): conservative brakes on an
-		// LLM-synthesized DAG. These map onto pipeline.Caps at the wiring site.
-		// The untrusted .fuse.local.yml may only TIGHTEN them (ADR-0006).
-		Pipeline: PipelineConfig{
-			Synthesis: PipelineSynthesisConfig{
-				MaxSteps:    50,
-				MaxFanout:   10,
-				MaxDepth:    4,
-				MaxAttempts: 3,
-			},
-		},
-		// The research workflow ships as a built-in default (change 0034): it
-		// binds the research skill to a facet-researcher worker (no spawn_agent,
-		// so it cannot nest) and a {concurrent:5, total:8, max_depth:1} pool — a
-		// reservation within the global brakes. A config-level workflows.research
-		// entry overrides these via the normal per-field merge.
-		Workflows: map[string]WorkflowConfig{
-			"research": {
-				Skill: "research",
-				Pool:  PoolConfig{Concurrent: 5, Total: 8, MaxDepth: 1},
-				Workers: map[string]WorkerConfig{
-					"facet-researcher": {
-						Tools: []string{"web_search", "web_fetch", "read_file"},
-					},
-				},
-			},
-		},
-		// Installed skills come from the filesystem by default (change 0134):
-		// dirs fall back to skills.DefaultDirs() at the call site, refresh is
-		// 30s.
-		Skills: SkillsConfig{Source: "fs", Refresh: "30s"},
 	}
 }

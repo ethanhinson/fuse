@@ -74,8 +74,6 @@ var (
 	// Human-messaging (ADR-0022): routed messages and /btw asides in the transcript.
 	humanMsgStyle = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
 	asideStyle    = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-	// The orchestrator side-channel: its own colour so its lines never read as the agent.
-	orchStyle = lipgloss.NewStyle().Foreground(colViolet).Bold(true)
 
 	// Editor status banners (models editor): a red error / green confirmation.
 	errorStyle    = lipgloss.NewStyle().Foreground(colRed)

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // --- doubles ---------------------------------------------------------------
@@ -46,7 +45,7 @@ func (c *fakeClock) advance(d time.Duration) {
 // fakeRunner is one substrate execution context.
 type fakeRunner struct {
 	mu       sync.Mutex
-	owner    loopauth.Principal
+	owner    Principal
 	env      map[string]string
 	execs    []string
 	releases int
@@ -77,13 +76,13 @@ func (r *fakeRunner) ResetEnv(env Env) error {
 	return nil
 }
 
-func (r *fakeRunner) acquiredFor() loopauth.Principal {
+func (r *fakeRunner) acquiredFor() Principal {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.owner
 }
 
-func (r *fakeRunner) setOwner(p loopauth.Principal) {
+func (r *fakeRunner) setOwner(p Principal) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.owner = p
@@ -154,7 +153,7 @@ func (s *fakeSource) setHealth(h HealthHooks) {
 // between the pool and the admission gate.
 func (s *fakeSource) setGate(g *Gate) { s.gate = g }
 
-func (s *fakeSource) Acquire(_ context.Context, p loopauth.Principal) (Runner, error) {
+func (s *fakeSource) Acquire(_ context.Context, p Principal) (Runner, error) {
 	s.mu.Lock()
 	err := s.err
 	env := map[string]string{}
@@ -278,8 +277,8 @@ func (h *hookRecorder) waitReap(t *testing.T, want ReleaseCause) ReleaseInfo {
 	}
 }
 
-func principal(tenant, subject string) loopauth.Principal {
-	return loopauth.Principal{Tenant: event.TenantID(tenant), Subject: subject}
+func principal(tenant, subject string) Principal {
+	return Principal{Tenant: event.TenantID(tenant), Subject: subject}
 }
 
 // --- tests -----------------------------------------------------------------
@@ -297,7 +296,7 @@ func TestPoolConcurrentTwoPrincipalIsolation(t *testing.T) {
 	pool := NewPool(src, withPoolClock(clock.now), withPoolReapInterval(time.Hour))
 	defer func() { _ = pool.Close(context.Background()) }()
 
-	principals := []loopauth.Principal{
+	principals := []Principal{
 		principal("acme", "alice"),
 		principal("globex", "bob"),
 	}
@@ -318,12 +317,12 @@ func TestPoolConcurrentTwoPrincipalIsolation(t *testing.T) {
 	// seen records which principal each underlying Runner was handed to, across
 	// the whole run. One Runner appearing under two principals is the breach.
 	var seenMu sync.Mutex
-	seen := map[*fakeRunner]loopauth.Principal{}
+	seen := map[*fakeRunner]Principal{}
 
 	for _, p := range principals {
 		for i := 0; i < iterations; i++ {
 			wg.Add(1)
-			go func(p loopauth.Principal) {
+			go func(p Principal) {
 				defer wg.Done()
 				ctx := context.Background()
 
@@ -814,7 +813,7 @@ func TestPoolDiscardsRunnerItCannotResetEnvOn(t *testing.T) {
 // unresettableSource hands out Runners with no ResetEnv method.
 type unresettableSource struct{ *fakeSource }
 
-func (s *unresettableSource) Acquire(ctx context.Context, p loopauth.Principal) (Runner, error) {
+func (s *unresettableSource) Acquire(ctx context.Context, p Principal) (Runner, error) {
 	r, err := s.fakeSource.Acquire(ctx, p)
 	if err != nil {
 		return nil, err

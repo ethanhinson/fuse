@@ -160,25 +160,25 @@ func TestBuildAgentWithRendererAndTraceForwardsObserver(t *testing.T) {
 }
 
 // assertBindingObservesRootAndChild drives one root turn through Deps.BuildAgent
-// and one child spawn through the per-loop child-builder it returns, asserting the
-// recording observer saw work from BOTH. It is the task-2 shape shared by the three
+// and one child spawn through the root's spawn_agent tool, asserting the recording
+// observer saw work from BOTH. It is the task-2 shape shared by the three
 // local bindings.
 func assertBindingObservesRootAndChild(t *testing.T, deps runtime.Deps, rec *recordingObserver,
 	tree *agent.AgentTree, alias string, toolReg *tools.Registry) {
 	t.Helper()
 	// Deps.Observer is load-bearing on its own, and calling BuildAgent directly
-	// cannot see it: internal/runtime/inproc.go OVERWRITES whatever BuildAgent
+	// cannot see it: internal/runtime OVERWRITES whatever BuildAgent
 	// installed with a.SetObserver(r.deps.Observer) on the StartLoop path. A
 	// binding that wires the observer only through its BuildAgent closure would
 	// satisfy every assertion below and still lose the observer in a real run, so
 	// assert the field identity explicitly. TestOneShotBindingObserverSurvivesStartLoop
 	// proves the same property end-to-end through the real path.
 	if deps.Observer != observe.Observer(rec) {
-		t.Fatalf("Deps.Observer = %#v, want the supplied observer: runtime/inproc.go overwrites the "+
+		t.Fatalf("Deps.Observer = %#v, want the supplied observer: internal/runtime overwrites the "+
 			"root agent's observer with Deps.Observer, so a binding that publishes it only via "+
 			"BuildAgent loses it on the StartLoop path", deps.Observer)
 	}
-	a, childBuilder, _, err := deps.BuildAgent(nil, tree, alias, toolReg)
+	a, err := deps.BuildAgent(nil, tree, alias, toolReg)
 	if err != nil {
 		t.Fatalf("BuildAgent: %v", err)
 	}
@@ -189,12 +189,8 @@ func assertBindingObservesRootAndChild(t *testing.T, deps runtime.Deps, rec *rec
 		t.Fatal("root agent did not use the supplied observer")
 	}
 	afterRoot := rec.count()
-	if childBuilder == nil {
-		t.Fatal("BuildAgent returned nil child-builder")
-	}
-	node := tree.Node(tree.RootID())
-	if _, err := childBuilder(context.Background(), agent.SpawnOpts{Label: "child", Task: "hi"}, node, tree); err != nil {
-		t.Fatalf("child build: %v", err)
+	if res := toolReg.Execute(context.Background(), "spawn_agent", `{"label":"child","task":"hi"}`); res.IsError {
+		t.Fatalf("spawn_agent: %s", res.Output)
 	}
 	if rec.count() <= afterRoot {
 		t.Fatal("child agent did not use the supplied observer")
@@ -222,7 +218,7 @@ func TestOneShotBindingHonorsSuppliedObserver(t *testing.T) {
 // TestOneShotBindingObserverSurvivesStartLoop drives a local binding through the
 // REAL entry-point path — runtime.New(deps).StartLoop — rather than calling
 // deps.BuildAgent directly. This is the only test in this file that exercises
-// internal/runtime/inproc.go's a.SetObserver(r.deps.Observer), which discards the
+// internal/runtime's a.SetObserver(r.deps.Observer), which discards the
 // observer BuildAgent installed and re-installs Deps.Observer. Asserting on the
 // agent-layer OperationModelAttempt span (not merely on span count) keeps the
 // runtime's own fuse.loop.run span from satisfying it.
@@ -251,7 +247,7 @@ func TestOneShotBindingObserverSurvivesStartLoop(t *testing.T) {
 	}
 	if !rec.sawKind(observe.OperationModelAttempt) {
 		t.Fatalf("no agent-layer %q span reached the supplied observer through StartLoop; "+
-			"runtime/inproc.go overwrote the root agent's observer with Deps.Observer",
+			"internal/runtime overwrote the root agent's observer with Deps.Observer",
 			observe.OperationModelAttempt)
 	}
 }
@@ -288,10 +284,10 @@ func TestShellBindingHonorsSuppliedObserver(t *testing.T) {
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rec := &recordingObserver{}
 
-	deps := buildShellRuntimeDeps(shellDepsInput{
+	deps := shellTestDeps(shellDepsInput{
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
 		verbose: false, skillBlock: "block", childApprove: permissions.AlwaysApprove,
-		rootApprove: permissions.AlwaysApprove, observer: rec,
+		observer: rec,
 	})
 	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
 }
@@ -302,7 +298,7 @@ func TestShellBindingHonorsSuppliedObserver(t *testing.T) {
 // else changes.
 //
 // It asserts both places a live observer could leak into a binding: Deps.Observer
-// (the load-bearing field, because runtime/inproc.go overwrites whatever
+// (the load-bearing field, because internal/runtime overwrites whatever
 // BuildAgent installed with it on the StartLoop path) and the root agent the
 // binding builds. Each binding's child-builder closes over the same substituted
 // observer value, and the constructors it calls are guarded directly by
@@ -333,10 +329,9 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 			})
 		}},
 		{"shell", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
-			return buildShellRuntimeDeps(shellDepsInput{
+			return shellTestDeps(shellDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				skillBlock: "block", childApprove: permissions.AlwaysApprove,
-				rootApprove: permissions.AlwaysApprove, observer: nil,
+				skillBlock: "block", childApprove: permissions.AlwaysApprove, observer: nil,
 			})
 		}},
 	} {
@@ -345,7 +340,7 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 			tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 			deps := tc.build(toolReg, tree)
 			assertNoop(t, "Deps.Observer", deps.Observer)
-			a, childBuilder, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
+			a, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
 			if err != nil {
 				t.Fatalf("BuildAgent: %v", err)
 			}
@@ -355,9 +350,8 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 			}
 			// Running must not swap the observer out from under the agent either.
 			assertNoop(t, "root agent observer after Run", observerOf(t, a))
-			node := tree.Node(tree.RootID())
-			if _, err := childBuilder(context.Background(), agent.SpawnOpts{Label: "child", Task: "hi"}, node, tree); err != nil {
-				t.Fatalf("child build: %v", err)
+			if res := toolReg.Execute(context.Background(), "spawn_agent", `{"label":"child","task":"hi"}`); res.IsError {
+				t.Fatalf("spawn_agent: %s", res.Output)
 			}
 		})
 	}

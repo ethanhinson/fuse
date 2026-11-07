@@ -1,8 +1,6 @@
 package sandbox
 
-import (
-	"github.com/ethanhinson/fuse/internal/loopauth"
-)
+import ()
 
 // HealthReason is the CLOSED enum of substrate-health causes this package can
 // HONESTLY observe. It is deliberately a sandbox-local vocabulary: the wire
@@ -66,7 +64,7 @@ const (
 type HealthInfo struct {
 	// Principal is the identity the failing work belonged to. It never reaches
 	// a payload; the consumer uses it for correlation only.
-	Principal loopauth.Principal
+	Principal Principal
 	// Handler is the bounded substrate identifier (container | host | microvm).
 	Handler string
 	// Runtime is the bounded container CLI name, or "".

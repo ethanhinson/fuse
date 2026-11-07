@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -43,8 +42,8 @@ const roleParityRoles = `roles:
     no_tools: true
 `
 
-// roleOperatorYAML is wfOperatorYAML with the parity roles.
-const roleOperatorYAML = wfOperatorYAML + roleParityRoles
+// roleOperatorYAML is the operator config with the parity roles.
+const roleOperatorYAML = hostedOperatorYAML + roleParityRoles
 
 // roleParitySpawns are the spawn_agent calls every row issues from its root:
 // a reviewer, a reviewer whose call names a model, a writer, a tool-less
@@ -58,17 +57,8 @@ var roleParitySpawns = []map[string]any{
 	{"label": "pln", "task": "PLN-TASK"},
 }
 
-// roleParitySpec is a harness spec defining the same roles.
-func roleParitySpec() *harnessv1.HarnessSpec {
-	return &harnessv1.HarnessSpec{Roles: map[string]*harnessv1.Role{
-		"reviewer": {Description: "Reviews code for correctness.", Instructions: "REVIEWER-BRIEF", Tools: []string{"read_file", "grep"}, Model: "house"},
-		"writer":   {Description: "Writes prose.", Instructions: "WRITER-BRIEF"},
-		"drafter":  {Description: "Drafts text.", Instructions: "DRAFTER-BRIEF", NoTools: true},
-	}}
-}
-
-// spawnRoute answers every child with one line; root turn 0 (hosted rows
-// only) issues spawns in parallel.
+// spawnRoute answers every child with one line; a root turn 0, when one runs,
+// issues spawns in parallel.
 func spawnRoute(spawns []map[string]any) func(task string, turn int, c gatewayCall) string {
 	return func(task string, turn int, _ gatewayCall) string {
 		if strings.Contains(task, "ROOT-TASK") && turn == 0 {
@@ -123,36 +113,25 @@ func oneShotParityBuild(t *testing.T, cfg config.Config, reg *model.Registry, to
 	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
 		permissions.AlwaysApprove, "block", false, nil, nil)
 	t.Cleanup(closeMCP)
-	return func() error { _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
+	return func() error { _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
 }
 
 // shellParityBuild is the shell binding's child-builder site.
 func shellParityBuild(t *testing.T, cfg config.Config, reg *model.Registry, toolReg *tools.Registry, tree *agent.AgentTree) func() error {
-	deps := buildShellRuntimeDeps(shellDepsInput{
+	deps := shellTestDeps(shellDepsInput{
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
 		skillBlock: "block", childApprove: permissions.AlwaysApprove,
-		rootApprove: permissions.AlwaysApprove,
 	})
-	return func() error { _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
+	return func() error { _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
 }
 
-// researchProbeParityBuild is the research probe's child-builder site. When
-// activate is set, the root is first activated as that workflow's root, as the
-// probe's own root is, so a spawn may name a worker without a workflow.
-func researchProbeParityBuild(activate string) parityBuild {
-	return func(t *testing.T, cfg config.Config, reg *model.Registry, toolReg *tools.Registry, tree *agent.AgentTree) func() error {
-		scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
-		if activate != "" {
-			if _, err := scope.activateRoot(tree.Node(tree.RootID()), activate); err != nil {
-				t.Fatalf("activateRoot(%s): %v", activate, err)
-			}
-		}
-		deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
-			cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-			scope: scope, logSink: probe.NewLog(),
-		})
-		return func() error { _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
-	}
+// researchProbeParityBuild is the research probe's child-builder site.
+func researchProbeParityBuild(t *testing.T, cfg config.Config, reg *model.Registry, toolReg *tools.Registry, tree *agent.AgentTree) func() error {
+	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
+		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+		logSink: probe.NewLog(),
+	})
+	return func() error { _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); return err }
 }
 
 // parityLocalSetup builds one local binding over operatorYAML (adjusted by
@@ -200,8 +179,7 @@ func roleParityLocal(t *testing.T, build parityBuild) (*routedGateway, *agent.Ag
 	return parityLocal(t, roleOperatorYAML, roleChildRoute, nil, build, roleParitySpawns)
 }
 
-// parityRow is one child-builder site (and, for the loop server, one source
-// of role or workflow config).
+// parityRow is one child-builder site.
 type parityRow struct {
 	name string
 	// operatorYAML is the config whose models resolve the persona prompts.
@@ -218,24 +196,14 @@ func roleParityRows() []parityRow {
 			return roleParityLocal(t, shellParityBuild)
 		}},
 		{"research-probe", roleOperatorYAML, func(t *testing.T) (*routedGateway, *agent.AgentTree) {
-			return roleParityLocal(t, researchProbeParityBuild(""))
-		}},
-		{"loop-server/operator", hostedOperatorYAML + roleParityRoles, func(t *testing.T) (*routedGateway, *agent.AgentTree) {
-			// An empty spec resolves to the operator config (and its roles)
-			// through the same resolver a spec does.
-			r := runHostedSpecWith(t, hostedOperatorYAML+roleParityRoles, &harnessv1.HarnessSpec{}, roleChildRoute)
-			return r.gw, r.tree
-		}},
-		{"loop-server/spec", hostedOperatorYAML, func(t *testing.T) (*routedGateway, *agent.AgentTree) {
-			r := runHostedSpec(t, roleParitySpec(), roleChildRoute)
-			return r.gw, r.tree
+			return roleParityLocal(t, researchProbeParityBuild)
 		}},
 	}
 }
 
 // assertToolLessChild checks marker's turn-0 request at the gateway: no tools
 // key, and exactly want as its system prompt, which names neither the file
-// and shell tools nor the blackboard.
+// and shell tools.
 func assertToolLessChild(t *testing.T, gw *routedGateway, marker, want string) gatewayCall {
 	t.Helper()
 	c := turnRequest(t, gw, marker, 0)
@@ -249,7 +217,7 @@ func assertToolLessChild(t *testing.T, gw *routedGateway, marker, want string) g
 	if sys != want {
 		t.Errorf("%s system prompt:\n got: %q\nwant: %q", marker, sys, want)
 	}
-	for _, banned := range []string{"file and shell tools", "blackboard"} {
+	for _, banned := range []string{"file and shell tools"} {
 		if strings.Contains(sys, banned) {
 			t.Errorf("%s system prompt mentions %q:\n%s", marker, banned, sys)
 		}
@@ -260,7 +228,7 @@ func assertToolLessChild(t *testing.T, gw *routedGateway, marker, want string) g
 // TestRoleParityAcrossChildBuilders drives the parity spawns through every
 // child-builder site and checks each one builds the role children alike.
 func TestRoleParityAcrossChildBuilders(t *testing.T) {
-	reviewerTools := []string{"blackboard_delete", "blackboard_keys", "blackboard_read", "blackboard_wait", "blackboard_write", "grep", "read_file"}
+	reviewerTools := []string{"grep", "read_file"}
 	for _, row := range roleParityRows() {
 		t.Run(row.name, func(t *testing.T) {
 			gw, tree := row.run(t)
@@ -277,7 +245,7 @@ func TestRoleParityAcrossChildBuilders(t *testing.T) {
 			}
 
 			// Reviewer: role brief after the persona, role model pin over the
-			// parent's model, role tool set plus the blackboard tools.
+			// parent's model, role tool set.
 			rev, revSys := system("REV-TASK")
 			assertInOrder(t, revSys, house, "REVIEWER-BRIEF")
 			if rev.Model != "cloud/house" {
@@ -335,31 +303,15 @@ func TestRoleParityAcrossChildBuilders(t *testing.T) {
 	}
 }
 
-// TestRoleParityTableCoversEveryChildBuilder keeps the parity table in step
-// with the code: one row per child-builder site, plus one for the loop
-// server's second role source (operator config and harness spec). A builder
-// installs through either entry point, agent.WithChildBuilder( or a spawner's
-// .WithBuilder(, so both are counted.
+// TestRoleParityTableCoversEveryChildBuilder keeps the parity table in step with
+// the code: one row per agent.WithChildBuilder( site.
 func TestRoleParityTableCoversEveryChildBuilder(t *testing.T) {
-	// workflowScope.runner's pipeline coordinator is the one known .WithBuilder(
-	// site without a row: it builds a model-less coordinator node that runs the
-	// pipeline steps itself and never takes a role, so there is nothing to
-	// route. Any other .WithBuilder( is a new child-builder site.
-	const modelLessWithBuilderSites = 1
-	childBuilders, withBuilders := 0, 0
+	count := 0
 	for _, src := range nonTestGoFiles(t) {
-		childBuilders += strings.Count(src, "agent.WithChildBuilder(")
-		withBuilders += strings.Count(src, ".WithBuilder(")
+		count += strings.Count(src, "agent.WithChildBuilder(")
 	}
-	if withBuilders < modelLessWithBuilderSites {
-		t.Fatalf(".WithBuilder( appears %d times, want at least the %d model-less coordinator site; update this guard", withBuilders, modelLessWithBuilderSites)
-	}
-	count := childBuilders + withBuilders - modelLessWithBuilderSites
-	if count > 4 {
-		t.Fatalf("child-builder entry points (agent.WithChildBuilder( and .WithBuilder() name %d role-taking child-builder sites, want at most 4: a new child-builder site exists; add a row to the role parity table", count)
-	}
-	if rows := len(roleParityRows()); rows != count+1 {
-		t.Fatalf("role parity table has %d rows, want %d (one per child-builder site, plus the loop server's spec source)", rows, count+1)
+	if rows := len(roleParityRows()); rows != count {
+		t.Fatalf("role parity table has %d rows, want %d (one per child-builder site)", rows, count)
 	}
 }
 
@@ -384,7 +336,7 @@ func TestRoleBriefCompositionByteForByte(t *testing.T) {
 // built without roles.
 func TestNoRolesSpawnSchemaUnchanged(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	cfg, err := config.FromYAML([]byte(wfOperatorYAML), "test")
+	cfg, err := config.FromYAML([]byte(hostedOperatorYAML), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +346,7 @@ func TestNoRolesSpawnSchemaUnchanged(t *testing.T) {
 	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
 		permissions.AlwaysApprove, "block", false, nil, nil)
 	t.Cleanup(closeMCP)
-	if _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); err != nil {
+	if _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); err != nil {
 		t.Fatalf("BuildAgent: %v", err)
 	}
 	var st tools.Tool
@@ -416,7 +368,7 @@ func TestNoRolesSpawnSchemaUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := json.Marshal(tools.NewSpawnAgentToolWithBudget(nil, nil).WithWorkflows(sortedWorkflowNames(cfg.Workflows)).Parameters())
+	want, err := json.Marshal(tools.NewSpawnAgentToolWithBudget(nil, nil).Parameters())
 	if err != nil {
 		t.Fatal(err)
 	}

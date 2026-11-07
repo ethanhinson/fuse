@@ -206,10 +206,10 @@ func TestDenyHint_Wording(t *testing.T) {
 	}
 	ownRemedy := map[string]bool{
 		LayerHeuristic: true, LayerEditScope: true, LayerFetchFloor: true,
-		LayerValve: true, LayerMediation: true,
+		LayerValve: true,
 	}
 	layers := []string{
-		LayerMediation, LayerDisabled, LayerModeOff, LayerCache, LayerParse,
+		LayerDisabled, LayerModeOff, LayerCache, LayerParse,
 		LayerRules, LayerSafelist, LayerHeuristic, LayerClassifier,
 		LayerFetchFloor, LayerEditScope, LayerValve, LayerHuman,
 		LayerSmartConfig, "",

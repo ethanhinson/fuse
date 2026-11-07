@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -66,11 +64,6 @@ type AgentsModel struct {
 	turnExpanded map[int]bool
 	inEventView  bool // full-content view of the selected event
 	eventScroll  int  // scroll offset within the expanded event
-	// inBlackboard shows the session blackboard snapshot in the detail pane
-	// (change 0023); bbScroll is the first visible line of that view.
-	inBlackboard bool
-	bbScroll     int
-	blackboard   *agent.Blackboard // session blackboard, or nil (no /agents bb tab)
 	width        int
 	height       int
 	// rateGate is the session's shared rate-gate bucket, or nil (change 0036). Its
@@ -107,28 +100,11 @@ func NewAgentsModel(t *agent.AgentTree, gate *ratelimit.Bucket) *AgentsModel {
 	return m
 }
 
-// WithBlackboard attaches the session blackboard so the overlay can show its
-// snapshot in a Blackboard section (change 0023). Nil is the no-blackboard path:
-// the "b" key then reports the tab is unavailable.
-func (m *AgentsModel) WithBlackboard(bb *agent.Blackboard) *AgentsModel {
-	m.blackboard = bb
-	return m
-}
-
 // WithSegments attaches the session's segment source (change 0030) so the
 // detail header can show the compaction indicator and "s" can open the archived
 // raw region in the drill-in. Nil is the no-segments path.
 func (m *AgentsModel) WithSegments(src segment.Source) *AgentsModel {
 	m.segments = src
-	return m
-}
-
-// ShowBlackboard opens the overlay directly on the Blackboard section, as if the
-// user had pressed "b". Used by the /blackboard slash command so it lands on the
-// board rather than the tree list. Returns the receiver for chaining.
-func (m *AgentsModel) ShowBlackboard() *AgentsModel {
-	m.inBlackboard = true
-	m.bbScroll = 0
 	return m
 }
 
@@ -181,13 +157,13 @@ func (m *AgentsModel) selectedTurnFilter() int {
 	return 0
 }
 
-// rightFocused reports whether the right column (detail/blackboard/event/segment)
+// rightFocused reports whether the right column (detail/event/segment)
 // currently holds focus, derived entirely from the existing view-state flags —
 // there is no separate focus source of truth. False means the left (tree) column
 // is focused. The colored-border focus indicator and the wheel-scroll routing
 // both key off this.
 func (m *AgentsModel) rightFocused() bool {
-	return m.inDetail || m.inBlackboard || m.inEventView || m.inSegmentView
+	return m.inDetail || m.inEventView || m.inSegmentView
 }
 
 // Init is a no-op; the parent ShellModel owns the tree-update subscription.
@@ -206,18 +182,6 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Approval popups are owned by ShellModel (which intercepts keys while
 		// its queue is non-empty), so only navigation keys arrive here.
-		if m.inBlackboard {
-			return m.handleBlackboardKey(msg)
-		}
-		// "b" is a global swap into the Blackboard from the tree list OR a node's
-		// detail view — the board is session-scoped, so it should be reachable
-		// wherever you are in the overlay, not only from the top-level tree.
-		// (The expanded single-event reader keeps "b" for its own scrolling.)
-		if msg.String() == "b" && !m.inEventView && !m.inSegmentView {
-			m.inBlackboard = true
-			m.bbScroll = 0
-			return m, nil
-		}
 		if m.inSegmentView {
 			return m.handleSegmentViewKey(msg)
 		}
@@ -328,8 +292,6 @@ func (m *AgentsModel) View() string {
 // detailTitle names the right pane by its current sub-view, for the border top.
 func (m *AgentsModel) detailTitle() string {
 	switch {
-	case m.inBlackboard:
-		return "blackboard"
 	case m.inSegmentView:
 		return "segment"
 	case m.inEventView:
@@ -462,85 +424,10 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if node, ok := m.selectedNode(); ok {
 			m.tree.CancelNode(node.ID)
 		}
-	// "b" (enter Blackboard) is handled globally in Update, before sub-view
-	// dispatch, so it works from the detail view too — not repeated here.
 	case "q", "esc":
 		return m, func() tea.Msg { return agentsExitMsg{} }
 	}
 	return m, nil
-}
-
-// handleBlackboardKey scrolls the blackboard snapshot; b/q/esc/tab returns to
-// the tree.
-func (m *AgentsModel) handleBlackboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "j", "down":
-		m.bbScroll++
-	case "k", "up":
-		if m.bbScroll > 0 {
-			m.bbScroll--
-		}
-	case "g":
-		m.bbScroll = 0
-	case "n":
-		// Jump to the next writer group's first line (clamps at the last group).
-		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
-			for _, s := range starts {
-				if s > m.bbScroll {
-					m.bbScroll = s
-					break
-				}
-			}
-		}
-	case "p":
-		// Jump to the previous writer group's first line (clamps at the first).
-		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
-			target := starts[0]
-			for _, s := range starts {
-				if s < m.bbScroll {
-					target = s
-				} else {
-					break
-				}
-			}
-			m.bbScroll = target
-		}
-	case "b", "q", "esc", "tab":
-		m.inBlackboard = false
-		m.bbScroll = 0
-	}
-	return m, nil
-}
-
-// blackboardGroupStarts returns the body-line index of each writer-group header
-// for the current snapshot, reusing the same grouping as the render path so n/p
-// navigation lands exactly on a group's first line. Empty when there is no board.
-func (m *AgentsModel) blackboardGroupStarts() []int {
-	if m.blackboard == nil {
-		return nil
-	}
-	snap := m.blackboard.Snapshot()
-	if len(snap) == 0 {
-		return nil
-	}
-	// Compute at the SAME content width the render uses so wrapped-line counts (and
-	// thus group-start indices) match exactly: the detail pane is 60% of the width
-	// minus the divider column, minus 1 for its single border glyph.
-	_, starts := m.blackboardBody(snap, m.blackboardContentWidth())
-	return starts
-}
-
-// blackboardContentWidth returns the content width the blackboard body is built
-// to during View() — the detail pane width (60% split minus the divider) minus the
-// pane's single border glyph. Mirrors the width math in View().
-func (m *AgentsModel) blackboardContentWidth() int {
-	treeW := m.width * 40 / 100
-	detailW := m.width - treeW - 1
-	w := detailW - 1 // single (right) border glyph
-	if w < 1 {
-		w = 1
-	}
-	return w
 }
 
 func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -658,11 +545,6 @@ func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
 		m.eventScroll += delta
 		if m.eventScroll < 0 {
 			m.eventScroll = 0
-		}
-	case m.inBlackboard:
-		m.bbScroll += delta
-		if m.bbScroll < 0 {
-			m.bbScroll = 0
 		}
 	case m.inDetail:
 		m.detailManual = true
@@ -997,9 +879,6 @@ func displayEvents(events []agent.AgentEvent) []agent.AgentEvent {
 // event list (one selectable row per event) or, after enter, the full
 // word-wrapped content of the selected event.
 func (m *AgentsModel) buildDetailLines(w int) []string {
-	if m.inBlackboard {
-		return m.buildBlackboardLines(w)
-	}
 	if len(m.nodes) == 0 {
 		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Select a node to inspect.")}
 	}
@@ -1133,325 +1012,11 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 	return append(out[:m.height-1], help)
 }
 
-// buildBlackboardLines renders the session blackboard snapshot in the detail
-// pane (change 0023): each key (sorted) with a wrote-by indicator from the
-// writer's label, followed by its JSON-rendered value. Every value/label byte is
-// model/tool-controlled, so it runs through sanitizeDisplay and is hard-wrapped
-// to the pane width before render — no line can exceed w or leak control bytes.
-func (m *AgentsModel) buildBlackboardLines(w int) []string {
-	header := lipgloss.NewStyle().Bold(true).Render(fitLine("Blackboard", w))
-	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
-	help := fitHelp(
-		"j/k scroll  n/p group  g top  b/esc back to tree",
-		"j/k · n/p group · g · b/esc",
-		w,
-	)
-
-	var body []string
-	var groupStarts []int // body-line index of each writer-group header
-	if m.blackboard == nil {
-		body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("No blackboard for this session.")}
-	} else {
-		snap := m.blackboard.Snapshot()
-		if len(snap) == 0 {
-			body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("Blackboard is empty.")}
-		} else {
-			body, groupStarts = m.blackboardBody(snap, w)
-		}
-	}
-
-	// Scroll window: header + rule occupy 2 rows, help occupies 1.
-	rows := m.height - 3
-	if rows < 1 {
-		rows = 1
-	}
-	// Clamp to [0, max(0, len(body)-rows)] so the pane cannot over-scroll past
-	// the last full window into a mostly-blank view (spec Decision 2; mirrors the
-	// detail pane's len(all)-rows clamp).
-	if maxScroll := len(body) - rows; m.bbScroll > maxScroll {
-		m.bbScroll = maxScroll
-	}
-	if m.bbScroll < 0 {
-		m.bbScroll = 0
-	}
-	end := m.bbScroll + rows
-	if end > len(body) {
-		end = len(body)
-	}
-	var window []string
-	if m.bbScroll < len(body) {
-		window = body[m.bbScroll:end]
-	}
-
-	// Sticky per-writer header: if the top of the window sits inside a group whose
-	// header has scrolled above the window, pin that header as the first visible
-	// line (one pinned header; no nested pinning). Drop the last content row so the
-	// pinned header does not push the window over its row budget.
-	if len(window) > 0 {
-		if gs := stickyGroupStart(groupStarts, m.bbScroll); gs >= 0 && gs < m.bbScroll {
-			pinned := stickyPinned(body[gs])
-			trimmed := window
-			if len(trimmed) >= rows && len(trimmed) > 1 {
-				trimmed = trimmed[:len(trimmed)-1]
-			}
-			window = append([]string{pinned}, trimmed...)
-		}
-	}
-
-	out := append([]string{header, rule}, window...)
-	for len(out) < m.height-1 {
-		out = append(out, "")
-	}
-	return append(out[:m.height-1], help)
-}
-
-// blackboardBody builds the grouped blackboard body lines and the body-line index
-// of each writer-group header. Entries bucket by writer (WriterLabel, falling back
-// to WriterID, then "(unknown)"); groups are ordered most-recent-first by the
-// group's max WrittenAt; keys are sorted alphabetically within a group. Every
-// model/tool-controlled field is sanitized and hard-wrapped to w so no line can
-// exceed the pane width or leak control bytes.
-//
-// Turn awareness (change 0066) lives strictly INSIDE a writer group: when the
-// root carries more than one turn mark, every group interleaves "── turn N ──"
-// sub-dividers between its per-turn buckets — including a group that only wrote
-// in a single turn, so its entries' turn-relative offsets are never unlabelled —
-// and every entry's meta line carries a turn-relative offset. groupStarts still
-// records only WRITER-group starts, so
-// n/p navigation absorbs the extra divider lines automatically. With at most one
-// turn mark on the root the output is byte-identical to the pre-0066 render.
-func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w int) (body []string, groupStarts []int) {
-	// Read the root node's turn marks through the single accessor both the render
-	// path and blackboardGroupStarts reach (the latter calls this function), so
-	// their line counts cannot diverge — the equality blackboardContentWidth's
-	// comment protects.
-	root := m.blackboardRootView()
-	turnAware := len(root.Turns) > 1
-	type group struct {
-		name   string
-		latest time.Time
-		keys   []string
-	}
-	byName := map[string]*group{}
-	for k, e := range snap {
-		name := writerGroupName(e)
-		g := byName[name]
-		if g == nil {
-			g = &group{name: name}
-			byName[name] = g
-		}
-		g.keys = append(g.keys, k)
-		if e.WrittenAt.After(g.latest) {
-			g.latest = e.WrittenAt
-		}
-	}
-	groups := make([]*group, 0, len(byName))
-	for _, g := range byName {
-		sort.Strings(g.keys)
-		groups = append(groups, g)
-	}
-	// Most-recent-writer-first; ties broken by name for a stable, deterministic order.
-	sort.Slice(groups, func(i, j int) bool {
-		if groups[i].latest.Equal(groups[j].latest) {
-			return groups[i].name < groups[j].name
-		}
-		return groups[i].latest.After(groups[j].latest)
-	})
-
-	groupHeaderStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-	keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-	metaStyle := lipgloss.NewStyle().Foreground(colMuted)
-	valStyle := lipgloss.NewStyle().Foreground(colNormal)
-	sepStyle := lipgloss.NewStyle().Foreground(colMuted)
-
-	for _, g := range groups {
-		groupStarts = append(groupStarts, len(body))
-		// Group header: "▌ <writer>" sanitized + fit to width.
-		hdr := "▌ " + sanitizeDisplay(g.name)
-		for _, hr := range wrapToWidth(hdr, w) {
-			body = append(body, groupHeaderStyle.Render(hr))
-		}
-		// Bucket the group's keys by the turn each entry was written in, using THE
-		// shared attribution rule (turnIndexFor) — never a second one. g.keys is
-		// already alphabetical and the bucketing is stable, so ordering inside a
-		// bucket is today's ordering; buckets themselves run turn-ascending.
-		buckets := blackboardTurnBuckets(root, snap, g.keys, turnAware)
-		for _, b := range buckets {
-			// Sub-divider before each bucket whenever the board is turn-aware. It is
-			// keyed on turnAware, not on len(buckets), because the meta lines are:
-			// a group that wrote in exactly one turn still renders "· +12.3s", and
-			// without its own divider nothing on screen says which turn that offset
-			// is relative to — while the group next to it carries dividers. On a
-			// board with at most one turn mark turnAware is false and no divider is
-			// emitted, so the legacy bytes are unchanged.
-			if turnAware {
-				body = append(body, sepStyle.Render(fitLine(fmt.Sprintf("── turn %d ──", turnOrdinal(root, b.turnIdx)), w)))
-			}
-			for ki, k := range b.keys {
-				e := snap[k]
-				// Key line: accented key, muted "written by" meta.
-				keyRows := wrapToWidth(sanitizeDisplay(k), w)
-				for _, kr := range keyRows {
-					body = append(body, keyStyle.Render(kr))
-				}
-				meta := "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
-				if turnAware {
-					// Turn-relative, clamped by the shared helper: structurally never negative.
-					meta = "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + " · +" + turnOffsetLabel(root, e.WrittenAt) + "⟩"
-				}
-				for _, mr := range wrapToWidth(meta, w) {
-					body = append(body, metaStyle.Render(mr))
-				}
-				// Value line(s): pretty JSON for objects/arrays (each already-indented
-				// line wrapped individually), inline for scalars; normal contrast.
-				for _, vl := range encodeBlackboardValueLines(e.Value, w) {
-					body = append(body, valStyle.Render(vl))
-				}
-				// Separator between entries (muted rule) — suppressed before a
-				// sub-divider, which already separates the buckets.
-				if ki < len(b.keys)-1 {
-					body = append(body, sepStyle.Render(fitLine(strings.Repeat("─", maxInt(1, w/3)), w)))
-				}
-			}
-		}
-		body = append(body, "") // blank line between groups
-	}
-	return body, groupStarts
-}
-
-// blackboardRootView is THE accessor the blackboard render path uses to reach the
-// root node's turn marks. blackboardGroupStarts renders through blackboardBody,
-// so both see exactly this view and their line counts cannot diverge. Returns a
-// zero NodeView (no turns ⇒ legacy render) when there is no tree or no root.
-func (m *AgentsModel) blackboardRootView() agent.NodeView {
-	if m.tree == nil {
-		return agent.NodeView{}
-	}
-	rootID := m.tree.RootID()
-	if v, ok := m.nodeByID[rootID]; ok {
-		return v
-	}
-	if n := m.tree.Node(rootID); n != nil {
-		return n.Snapshot()
-	}
-	return agent.NodeView{}
-}
-
-// blackboardTurnBucket is one turn's slice of a writer group's keys.
-type blackboardTurnBucket struct {
-	turnIdx int // index into root.Turns; -1 on the legacy (turn-unaware) path
-	keys    []string
-}
-
-// blackboardTurnBuckets splits one writer group's (already alphabetically sorted)
-// keys into turn-ascending buckets. Attribution goes through turnIndexFor — the
-// same rule the event pane uses — so an entry can never sit under a divider that
-// disagrees with the offset printed on it. When the root is not multi-turn the
-// whole group is a single bucket, which suppresses dividers and keeps the render
-// byte-identical to the pre-0066 output.
-func blackboardTurnBuckets(root agent.NodeView, snap map[string]agent.BlackboardEntry, keys []string, turnAware bool) []blackboardTurnBucket {
-	if !turnAware {
-		return []blackboardTurnBucket{{turnIdx: -1, keys: keys}}
-	}
-	byTurn := map[int][]string{}
-	var order []int
-	for _, k := range keys {
-		ti := turnIndexFor(root, snap[k].WrittenAt)
-		if _, seen := byTurn[ti]; !seen {
-			order = append(order, ti)
-		}
-		byTurn[ti] = append(byTurn[ti], k)
-	}
-	sort.Ints(order)
-	out := make([]blackboardTurnBucket, 0, len(order))
-	for _, ti := range order {
-		out = append(out, blackboardTurnBucket{turnIdx: ti, keys: byTurn[ti]})
-	}
-	return out
-}
-
-// writerGroupName picks the display bucket for an entry: WriterLabel, then
-// WriterID, then "(unknown)".
-func writerGroupName(e agent.BlackboardEntry) string {
-	if s := strings.TrimSpace(e.WriterLabel); s != "" {
-		return e.WriterLabel
-	}
-	if s := strings.TrimSpace(e.WriterID); s != "" {
-		return e.WriterID
-	}
-	return "(unknown)"
-}
-
-// stickyGroupStart returns the body-line index of the header of the group that
-// contains body line `top`, or -1 if none. groupStarts is ascending.
-func stickyGroupStart(groupStarts []int, top int) int {
-	gs := -1
-	for _, s := range groupStarts {
-		if s <= top {
-			gs = s
-		} else {
-			break
-		}
-	}
-	return gs
-}
-
-// stickyPinned re-renders a group header line as a pinned header (kept identical
-// to the in-body header so the text is stable as it pins/unpins).
-func stickyPinned(headerLine string) string { return headerLine }
-
 func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
-}
-
-// encodeBlackboardValue JSON-encodes a stored value for display, falling back to
-// a Go-formatted string if it is somehow not encodable.
-func encodeBlackboardValue(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("%v", v)
-	}
-	return string(b)
-}
-
-// encodeBlackboardValueLines renders a stored value as display lines fit to width
-// w. Scalars (string/number/bool/nil) render inline on a single indented line;
-// object/array values pretty-print as 2-space-indented JSON with EACH already-
-// indented line sanitized and wrapped individually (indentation preserved, the
-// blob never re-flowed as one string — guardrail 2). Every returned line's display
-// width is <= w.
-func encodeBlackboardValueLines(v any, w int) []string {
-	switch v.(type) {
-	case map[string]any, []any:
-		b, err := json.MarshalIndent(v, "", "  ")
-		if err != nil {
-			return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
-		}
-		var out []string
-		for _, raw := range strings.Split(string(b), "\n") {
-			// Preserve the JSON indentation; wrap this one already-indented line.
-			for _, wl := range wrapToWidth("  "+sanitizeDisplay(raw), w) {
-				out = append(out, wl)
-			}
-		}
-		return out
-	default:
-		return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
-	}
-}
-
-// wrapToWidth hard-wraps s (already sanitized) so no returned line's display
-// width exceeds w. wrap.String breaks any run longer than w (word boundaries are
-// ignored past the limit), so a single 500-char token still splits.
-func wrapToWidth(s string, w int) []string {
-	if w < 1 {
-		w = 1
-	}
-	wrapped := wrap.String(wordwrap.String(s, w), w)
-	return strings.Split(wrapped, "\n")
 }
 
 // turnStartFor resolves the start of the turn an event belongs to. Attribution
@@ -1592,10 +1157,8 @@ func eventOffset(n agent.NodeView, ts time.Time) string {
 
 // turnOffsetLabel is eventOffset's INLINE form: the same clamped, turn-relative
 // duration, without the zero padding. eventOffset pads to a fixed width because
-// the detail pane renders it inside a "[…]" column that must stay aligned; the
-// blackboard's "⟨written by alice · +12.3s⟩" is prose, where a padded "+012.3s"
-// reads as a rendering fault rather than a duration (found at change 0066's live
-// verification). Both share turnStartFor, so attribution cannot diverge.
+// the detail pane renders it inside a "[…]" column that must stay aligned. Both share
+// turnStartFor, so attribution cannot diverge.
 func turnOffsetLabel(n agent.NodeView, ts time.Time) string {
 	d := ts.Sub(turnStartFor(n, ts))
 	if d < 0 {

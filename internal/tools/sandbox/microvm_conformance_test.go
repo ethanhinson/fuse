@@ -57,7 +57,7 @@ package sandbox
 // THE MICROVM FILESYSTEM CONTRACT (change #0065, recorded, not built).
 //
 // Change #0065 makes the container backend's bind-mount source a function of
-// loopauth.Principal.Tenant, resolved per-Acquire through the tenantRootSource
+// Principal.Tenant, resolved per-Acquire through the tenantRootSource
 // seam (container.go) from a resolver the composition root supplies
 // (WithTenantRoots). ADR-0044's 2026-08-16 Update requires the SAME tenant-
 // scoped, non-escaping workspace of the microVM handler, expressed VM-natively.
@@ -113,8 +113,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // errMicrovmNotBuilt is what a future microVM handler's Acquire returns until
@@ -140,7 +138,7 @@ func (*microvmStub) Name() string { return "microvm" }
 // Acquire refuses unconditionally today (no handler is built), and — the
 // load-bearing case — refuses when /dev/kvm is absent rather than ever
 // returning something that could be mistaken for a host Runner.
-func (m *microvmStub) Acquire(_ context.Context, _ loopauth.Principal, _ Env) (Runner, error) {
+func (m *microvmStub) Acquire(_ context.Context, _ Principal, _ Env) (Runner, error) {
 	if m.kvmPresent != nil && !m.kvmPresent() {
 		// Fail CLOSED: per ADR-0044's Update, a kvm-absent host must refuse,
 		// never degrade to the host/no-container off-switch.
@@ -165,7 +163,7 @@ func (*microvmRunnerStub) Release(context.Context) error { return nil }
 func TestMicrovmStub_AcquireRefuses(t *testing.T) {
 	m := &microvmStub{}
 
-	runner, err := m.Acquire(context.Background(), loopauth.Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
+	runner, err := m.Acquire(context.Background(), Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
 	if err == nil {
 		t.Fatal("expected a refusal error, got nil")
 	}
@@ -185,7 +183,7 @@ func TestMicrovmStub_AcquireRefuses(t *testing.T) {
 func TestMicrovmStub_KVMAbsentFailsClosed(t *testing.T) {
 	m := &microvmStub{kvmPresent: func() bool { return false }}
 
-	runner, err := m.Acquire(context.Background(), loopauth.Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
+	runner, err := m.Acquire(context.Background(), Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
 
 	if err == nil {
 		t.Fatal("kvm-absent Acquire must return a non-nil error")
@@ -217,7 +215,7 @@ func TestMicrovmStub_KVMAbsentFailsClosed(t *testing.T) {
 func TestMicrovmStub_KVMPresentStillRefuses(t *testing.T) {
 	m := &microvmStub{kvmPresent: func() bool { return true }}
 
-	runner, err := m.Acquire(context.Background(), loopauth.Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
+	runner, err := m.Acquire(context.Background(), Principal{Tenant: "t-1", Subject: "s-1"}, Env{})
 	if err == nil {
 		t.Fatal("expected a refusal error even with kvm present, got nil")
 	}

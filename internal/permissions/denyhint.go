@@ -18,8 +18,6 @@ func denyHint(layer string) string {
 		return "the auto-mode classifier judged this call unsafe; retrying the identical call will fail - change approach or ask the user"
 	case LayerValve:
 		return "auto mode is paused; further gray-area calls will not be auto-approved this session"
-	case LayerMediation:
-		return "the target is outside this principal's allowlist; no retry will succeed"
 	default:
 		return "retrying the identical call will fail - change the command or ask the user"
 	}

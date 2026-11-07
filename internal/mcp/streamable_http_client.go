@@ -238,11 +238,9 @@ func (c *StreamableHTTPClient) setHeaders(ctx context.Context, req *http.Request
 	c.mu.Lock()
 	token, sess := c.bearerToken, c.sessionID
 	c.mu.Unlock()
-	applyCallAuth(ctx, req.Header.Set, func() {
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	})
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	if sess != "" {
 		req.Header.Set(hdrSessionID, sess)
 	}

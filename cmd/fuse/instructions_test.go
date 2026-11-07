@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -104,10 +103,10 @@ func defaultPersonaPrompt(t *testing.T, operatorYAML string) string {
 
 // loopRootSystem starts one loop on rt and returns the system message of the
 // first model request that loop made.
-func loopRootSystem(t *testing.T, rt runtime.Runtime, gw *recordingGateway, spec *harnessv1.HarnessSpec) string {
+func loopRootSystem(t *testing.T, rt runtime.Runtime, gw *recordingGateway) string {
 	t.Helper()
 	before := len(gw.snapshot())
-	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
@@ -139,58 +138,21 @@ func assertInOrder(t *testing.T, sys string, parts ...string) {
 	}
 }
 
-// TestLoopServerSpecInstructionsReachRootPrompt is the composition-root proof
-// on the production loop-server wiring: a spec's instructions reach the root's
+// TestInstructionsReachRootPrompt is the composition-root proof on the
+// production one-shot wiring: the config's instructions reach the root's
 // model-facing system message after the persona and before the skill listing.
-func TestLoopServerSpecInstructionsReachRootPrompt(t *testing.T) {
-	rt, gw, _ := harnessServer(t, harnessOperator)
-	turns := uint32(1)
-	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: testBrief})
-	assertInOrder(t, sys, defaultPersonaPrompt(t, harnessOperator), testBrief, "- research")
-}
-
-// TestLoopServerOperatorInstructionsAndSpecOverride pins the layering: the
-// operator's instructions apply to a loop without a spec and to a spec that
-// leaves instructions unset, and a spec's instructions replace them.
-func TestLoopServerOperatorInstructionsAndSpecOverride(t *testing.T) {
+func TestInstructionsReachRootPrompt(t *testing.T) {
 	op := harnessOperator + "instructions: OPERATOR-BRIEF\n"
-	rt, gw, _ := harnessServer(t, op)
-	turns := uint32(1)
-
-	if sys := loopRootSystem(t, rt, gw, nil); !strings.Contains(sys, "OPERATOR-BRIEF") {
-		t.Errorf("operator loop lacks the operator instructions:\n%s", sys)
-	} else {
-		assertInOrder(t, sys, defaultPersonaPrompt(t, op), "OPERATOR-BRIEF", "- research")
-	}
-
-	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "SPEC-BRIEF"})
-	if !strings.Contains(sys, "SPEC-BRIEF") || strings.Contains(sys, "OPERATOR-BRIEF") {
-		t.Errorf("spec loop must carry SPEC-BRIEF and not OPERATOR-BRIEF:\n%s", sys)
-	}
-
-	sys = loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "research"}}})
-	if !strings.Contains(sys, "OPERATOR-BRIEF") {
-		t.Errorf("a spec without instructions must keep the operator's:\n%s", sys)
-	}
-}
-
-// TestLoopServerWhitespaceSpecKeepsOperatorInstructions: a spec whose
-// instructions are whitespace-only counts as unset, so the operator's brief
-// still reaches the root prompt.
-func TestLoopServerWhitespaceSpecKeepsOperatorInstructions(t *testing.T) {
-	op := harnessOperator + "instructions: OPERATOR-BRIEF\n"
-	rt, gw, _ := harnessServer(t, op)
-	turns := uint32(1)
-	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "  \n\t "})
+	rt, gw := harnessServer(t, op)
+	sys := loopRootSystem(t, rt, gw)
 	assertInOrder(t, sys, defaultPersonaPrompt(t, op), "OPERATOR-BRIEF", "- research")
 }
 
-// TestLoopServerBlankInstructionsMatchGolden: whitespace-only instructions
+// TestBlankInstructionsMatchGolden: whitespace-only instructions
 // leave the root system message byte for byte as it is today.
-func TestLoopServerBlankInstructionsMatchGolden(t *testing.T) {
-	rt, gw, _ := harnessServer(t, harnessOperator)
-	turns := uint32(1)
-	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "  \n\t "})
+func TestBlankInstructionsMatchGolden(t *testing.T) {
+	rt, gw := harnessServer(t, harnessOperator+"instructions: \"  \\n\\t \"\n")
+	sys := loopRootSystem(t, rt, gw)
 	if dir := sessionScratchDir(); dir != "" {
 		sys = strings.ReplaceAll(sys, dir, "<SCRATCH>")
 	}
@@ -203,26 +165,25 @@ func TestLoopServerBlankInstructionsMatchGolden(t *testing.T) {
 	}
 }
 
-// TestLoopServerSubagentsNeverGetInstructions: on the production loop-server
-// wiring the root carries the spec's instructions while a plain subagent, a
-// workflow lead and its workers never do.
-func TestLoopServerSubagentsNeverGetInstructions(t *testing.T) {
+// TestSubagentsNeverGetInstructions: on the production one-shot wiring the root
+// carries the config's instructions while a subagent and its own child never do.
+func TestSubagentsNeverGetInstructions(t *testing.T) {
 	const brief = "ROOT-ONLY-BRIEF"
-	spec := wfSpec()
-	spec.Instructions = brief
-	r := runHostedSpec(t, spec, func(task string, turn int, c gatewayCall) string {
+	r := runHostedConfig(t, hostedOperatorYAML+"instructions: "+brief+"\n", func(task string, turn int, c gatewayCall) string {
 		switch {
 		case strings.Contains(task, "ROOT-TASK") && turn == 0:
 			return toolCallsReply(
 				call{name: "spawn_agent", args: map[string]any{"label": "helper", "task": "CHILD-TASK"}},
-				call{name: "spawn_agent", args: map[string]any{"label": "lead", "task": "LEAD-TASK", "workflow": "wf"}},
+				call{name: "spawn_agent", args: map[string]any{"label": "lead", "task": "LEAD-TASK"}},
 			)
 		case strings.Contains(task, "ROOT-TASK"):
 			return textReply("root done")
-		case strings.Contains(task, "CHILD-TASK"):
-			return textReply("child done")
+		case strings.Contains(task, "LEAD-TASK") && turn == 0:
+			return toolCallsReply(call{name: "spawn_agent", args: map[string]any{"label": "r0", "task": "READ-TASK"}})
+		case strings.Contains(task, "LEAD-TASK"):
+			return textReply("lead done")
 		}
-		return leadRoute(task, turn, c)
+		return textReply("child done")
 	})
 
 	root := turnRequest(t, r.gw, "ROOT-TASK", 0)
@@ -265,21 +226,12 @@ func TestLocalRootsGetInstructionsChildrenDoNot(t *testing.T) {
 			t.Cleanup(closeMCP)
 			return deps, map[string]any{"label": "c", "task": "LOCAL-CHILD"}
 		}},
-		{"shell", func(t *testing.T, cfg config.Config, toolReg *tools.Registry, tree *agent.AgentTree) (runtime.Deps, map[string]any) {
-			reg := registryFromConfig(cfg)
-			return buildShellRuntimeDeps(shellDepsInput{
-				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				skillBlock: "block", childApprove: permissions.AlwaysApprove,
-				rootApprove: permissions.AlwaysApprove,
-			}), map[string]any{"label": "c", "task": "LOCAL-CHILD"}
-		}},
 		{"research-probe", func(t *testing.T, cfg config.Config, toolReg *tools.Registry, tree *agent.AgentTree) (runtime.Deps, map[string]any) {
 			reg := registryFromConfig(cfg)
-			scope := newWorkflowScope(tree, cfg.Workflows, nil)
 			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				scope: scope, logSink: probe.NewLog(),
-			}), map[string]any{"label": "c", "task": "LOCAL-CHILD", "workflow": "research"}
+				logSink: probe.NewLog(),
+			}), map[string]any{"label": "c", "task": "LOCAL-CHILD"}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -287,7 +239,7 @@ func TestLocalRootsGetInstructionsChildrenDoNot(t *testing.T) {
 			gw := &routedGateway{route: func(string, int, gatewayCall) string { return textReply("ok") }}
 			srv := httptest.NewServer(gw)
 			t.Cleanup(srv.Close)
-			cfg, err := config.FromYAML([]byte(wfOperatorYAML), "test")
+			cfg, err := config.FromYAML([]byte(hostedOperatorYAML), "test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -298,7 +250,7 @@ func TestLocalRootsGetInstructionsChildrenDoNot(t *testing.T) {
 			tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 			deps, spawnArgs := tc.build(t, cfg, toolReg, tree)
 
-			a, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
+			a, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
 			if err != nil {
 				t.Fatalf("BuildAgent: %v", err)
 			}
@@ -325,30 +277,6 @@ func TestLocalRootsGetInstructionsChildrenDoNot(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestSpecDigestChangesWithInstructions: the production resolver's digest
-// covers instructions, and an empty value is the same spec as an unset one.
-func TestSpecDigestChangesWithInstructions(t *testing.T) {
-	_, _, host := harnessServer(t, harnessOperator)
-	digest := func(spec *harnessv1.HarnessSpec) string {
-		t.Helper()
-		res, err := host.resolver().Resolve(context.Background(), "", spec)
-		if err != nil {
-			t.Fatalf("Resolve: %v", err)
-		}
-		return res.Digest
-	}
-	turns := uint32(1)
-	base := digest(&harnessv1.HarnessSpec{MaxTurns: &turns})
-	if got := digest(&harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: ""}); got != base {
-		t.Errorf("empty instructions changed the digest: %s != %s", got, base)
-	}
-	a := digest(&harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "brief A"})
-	b := digest(&harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "brief B"})
-	if a == base || b == base || a == b {
-		t.Errorf("digests must differ by instructions: base %s, A %s, B %s", base, a, b)
 	}
 }
 

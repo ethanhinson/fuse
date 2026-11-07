@@ -82,15 +82,15 @@ func TestDefaultMaxTokensCeilingIsGenerous(t *testing.T) {
 
 func TestDefaultAgentsMaxSpawns(t *testing.T) {
 	c := Default()
-	if c.Agents.MaxSpawns != 64 {
-		t.Errorf("default Agents.MaxSpawns = %d, want 64", c.Agents.MaxSpawns)
+	if c.Agents.MaxSpawns != 16 {
+		t.Errorf("default Agents.MaxSpawns = %d, want 16", c.Agents.MaxSpawns)
 	}
 }
 
 func TestDefaultAgentsMaxConcurrent(t *testing.T) {
 	c := Default()
-	if c.Agents.MaxConcurrent != 16 {
-		t.Errorf("default Agents.MaxConcurrent = %d, want 16", c.Agents.MaxConcurrent)
+	if c.Agents.MaxConcurrent != 8 {
+		t.Errorf("default Agents.MaxConcurrent = %d, want 8", c.Agents.MaxConcurrent)
 	}
 }
 
@@ -135,7 +135,7 @@ func TestLoadAgentsMaxConcurrentUnsetKeepsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agents.MaxConcurrent != 16 {
+	if c.Agents.MaxConcurrent != 8 {
 		t.Errorf("Agents.MaxConcurrent = %d, want 16 (unset keeps default)", c.Agents.MaxConcurrent)
 	}
 }
@@ -162,7 +162,7 @@ func TestLoadAgentsMaxConcurrentNegativeClampsToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agents.MaxConcurrent != 16 {
+	if c.Agents.MaxConcurrent != 8 {
 		t.Errorf("Agents.MaxConcurrent = %d, want 16 (negative clamped to default)", c.Agents.MaxConcurrent)
 	}
 }
@@ -187,7 +187,7 @@ func TestLoadAgentsMaxSpawnsNegativeClampsToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agents.MaxSpawns != 64 {
+	if c.Agents.MaxSpawns != 16 {
 		t.Errorf("Agents.MaxSpawns = %d, want 64 (negative clamped to default)", c.Agents.MaxSpawns)
 	}
 }
@@ -233,7 +233,7 @@ func TestLoadAgentsMaxSpawnsUnsetKeepsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agents.MaxSpawns != 64 {
+	if c.Agents.MaxSpawns != 16 {
 		t.Errorf("Agents.MaxSpawns = %d, want 64 (unset keeps default)", c.Agents.MaxSpawns)
 	}
 }
@@ -938,218 +938,7 @@ func TestLoadEnvOverridesGateway(t *testing.T) {
 
 // --- change 0034: workflows: config surface ---
 
-// The research workflow ships as a built-in default (change 0034): it binds the
-// research skill to a facet-researcher worker and the {5,8,1} pool, so /research
-// is policy-governed out of the box. Config may override it via the normal merge.
-func TestDefaultShipsResearchWorkflow(t *testing.T) {
-	c := Default()
-	wf, ok := c.Workflows["research"]
-	if !ok {
-		t.Fatalf("Default().Workflows missing 'research'; got %v", c.Workflows)
-	}
-	if wf.Skill != "research" {
-		t.Errorf("skill = %q, want research", wf.Skill)
-	}
-	if wf.Pool.Concurrent != 5 || wf.Pool.Total != 8 || wf.Pool.MaxDepth != 1 {
-		t.Errorf("pool = %+v, want {5 8 1}", wf.Pool)
-	}
-	w, ok := wf.Workers["facet-researcher"]
-	if !ok {
-		t.Fatalf("facet-researcher worker missing; got %v", wf.Workers)
-	}
-	for _, tl := range w.Tools {
-		if tl == "spawn_agent" {
-			t.Error("facet-researcher must not carry spawn_agent (cannot nest)")
-		}
-	}
-	want := map[string]bool{"web_search": true, "web_fetch": true, "read_file": true}
-	if len(w.Tools) != len(want) {
-		t.Errorf("facet-researcher tools = %v, want %v", w.Tools, want)
-	}
-	for _, tl := range w.Tools {
-		if !want[tl] {
-			t.Errorf("unexpected tool %q in facet-researcher", tl)
-		}
-	}
-}
-
-func TestLoadWorkflowsParsesAndLayers(t *testing.T) {
-	dir := t.TempDir()
-	home := filepath.Join(dir, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfg := `
-workflows:
-  research:
-    skill: research
-    pool:
-      concurrent: 5
-      total: 8
-      max_depth: 1
-    workers:
-      facet-researcher:
-        tools: [web_search, web_fetch, read_file]
-`
-	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf, ok := c.Workflows["research"]
-	if !ok {
-		t.Fatalf("Workflows[research] missing; got %v", c.Workflows)
-	}
-	if wf.Skill != "research" {
-		t.Errorf("skill = %q, want research", wf.Skill)
-	}
-	if wf.Pool.Concurrent != 5 || wf.Pool.Total != 8 || wf.Pool.MaxDepth != 1 {
-		t.Errorf("pool = %+v, want {5 8 1}", wf.Pool)
-	}
-	w, ok := wf.Workers["facet-researcher"]
-	if !ok {
-		t.Fatalf("worker facet-researcher missing; got %v", wf.Workers)
-	}
-	if got := strings.Join(w.Tools, ","); got != "web_search,web_fetch,read_file" {
-		t.Errorf("worker tools = %q", got)
-	}
-	for _, tl := range w.Tools {
-		if tl == "spawn_agent" {
-			t.Error("facet-researcher must not carry spawn_agent")
-		}
-	}
-}
-
-// TestLocalWorkflowsTightenOnly asserts the ADR-0006 trust boundary for the
-// repo-plantable .fuse.local.yml: it may LOWER a workflow pool number (tighten)
-// but a value that would LOOSEN it (raise the cap) is ignored, keeping the
-// trusted home-file value, and a warning names the workflow.
-func TestLocalWorkflowsTightenOnly(t *testing.T) {
-	cwd := chdirTemp(t)
-	home := filepath.Join(cwd, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	// Trusted home file establishes the baseline pool.
-	trusted := `
-workflows:
-  research:
-    skill: research
-    pool: {concurrent: 5, total: 8, max_depth: 1}
-`
-	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Untrusted local file tries to LOOSEN total (8 -> 64) and TIGHTEN concurrent (5 -> 2).
-	local := `
-workflows:
-  research:
-    pool: {concurrent: 2, total: 64}
-`
-	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := captureWarnings(t)
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf := c.Workflows["research"]
-	if wf.Pool.Concurrent != 2 {
-		t.Errorf("concurrent = %d, want 2 (local tighten honored)", wf.Pool.Concurrent)
-	}
-	if wf.Pool.Total != 8 {
-		t.Errorf("total = %d, want 8 (local loosening ignored)", wf.Pool.Total)
-	}
-	if w := warnings(); !strings.Contains(w, "research") {
-		t.Errorf("expected a warning naming the loosened workflow; got %q", w)
-	}
-}
-
 // --- change 0036: queue_bound + throughput: + pool.tokens config surface ---
-
-// TestLoadFullThroughputSketchRoundTrips parses the spec's full config sketch
-// and asserts every new knob resolves: queue_bound, throughput.{rpm,tpm,session}
-// with a per-provider override, and workflows.<name>.pool.tokens.
-func TestLoadFullThroughputSketchRoundTrips(t *testing.T) {
-	c := writeHomeConfig(t, `
-agents:
-  max_concurrent: 16
-  max_spawns: 64
-  queue_bound: 2.0
-throughput:
-  requests_per_minute: 120
-  tokens_per_minute: 90000
-  session_tokens: 1000000
-  providers:
-    deepseek:
-      requests_per_minute: 60
-      tokens_per_minute: 40000
-workflows:
-  research:
-    skill: research
-    pool: {concurrent: 5, total: 8, max_depth: 1, tokens: 500000}
-`)
-
-	if c.Agents.QueueBound != 2.0 {
-		t.Errorf("Agents.QueueBound = %v, want 2.0", c.Agents.QueueBound)
-	}
-	if c.Throughput.RequestsPerMinute != 120 {
-		t.Errorf("Throughput.RequestsPerMinute = %d, want 120", c.Throughput.RequestsPerMinute)
-	}
-	if c.Throughput.TokensPerMinute != 90000 {
-		t.Errorf("Throughput.TokensPerMinute = %d, want 90000", c.Throughput.TokensPerMinute)
-	}
-	if c.Throughput.SessionTokens != 1000000 {
-		t.Errorf("Throughput.SessionTokens = %d, want 1000000", c.Throughput.SessionTokens)
-	}
-	dp, ok := c.Throughput.Providers["deepseek"]
-	if !ok {
-		t.Fatalf("Throughput.Providers missing deepseek; got %v", c.Throughput.Providers)
-	}
-	if dp.RequestsPerMinute != 60 {
-		t.Errorf("deepseek RequestsPerMinute = %d, want 60", dp.RequestsPerMinute)
-	}
-	if dp.TokensPerMinute != 40000 {
-		t.Errorf("deepseek TokensPerMinute = %d, want 40000", dp.TokensPerMinute)
-	}
-	if c.Workflows["research"].Pool.Tokens != 500000 {
-		t.Errorf("research pool.tokens = %d, want 500000", c.Workflows["research"].Pool.Tokens)
-	}
-}
-
-// TestAbsentThroughputAndQueueBoundAreZero asserts a config that mentions none
-// of the new knobs leaves them at their zero values (Acceptance 5 tail: absent
-// config ⇒ byte-identical behavior). QueueBound 0 = unset (default 2.0 applied
-// where consumed), rpm/tpm/session/tokens 0 = unlimited/unset.
-func TestAbsentThroughputAndQueueBoundAreZero(t *testing.T) {
-	c := writeHomeConfig(t, "max_turns: 30\n")
-
-	if c.Agents.QueueBound != 0 {
-		t.Errorf("Agents.QueueBound = %v, want 0 (unset)", c.Agents.QueueBound)
-	}
-	if c.Throughput.RequestsPerMinute != 0 || c.Throughput.TokensPerMinute != 0 || c.Throughput.SessionTokens != 0 {
-		t.Errorf("Throughput = %+v, want all-zero (unset)", c.Throughput)
-	}
-	if len(c.Throughput.Providers) != 0 {
-		t.Errorf("Throughput.Providers = %v, want empty (unset)", c.Throughput.Providers)
-	}
-	// The built-in research workflow ships without a tokens quota.
-	if c.Workflows["research"].Pool.Tokens != 0 {
-		t.Errorf("default research pool.tokens = %d, want 0 (unset)", c.Workflows["research"].Pool.Tokens)
-	}
-}
 
 // TestLoadQueueBoundOverride asserts a trusted home file sets queue_bound.
 func TestLoadQueueBoundOverride(t *testing.T) {
@@ -1296,55 +1085,6 @@ func TestTrustedThroughputNegativeIsDropped(t *testing.T) {
 				t.Errorf("%s = %d, want 0 (trusted negative dropped, axis stays unset)", tc.axis, got)
 			}
 		})
-	}
-}
-
-// TestLocalPoolTokensTightenOnly asserts workflows.<name>.pool.tokens follows
-// the same tighten-only merge as the other pool numbers: local may lower an
-// already-set quota but not raise it or set a previously-unset one.
-func TestLocalPoolTokensTightenOnly(t *testing.T) {
-	cwd := chdirTemp(t)
-	home := filepath.Join(cwd, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	trusted := `
-workflows:
-  research:
-    skill: research
-    pool: {concurrent: 5, total: 8, max_depth: 1, tokens: 500000}
-`
-	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Local: lower tokens (honored), raise total (ignored).
-	local := `
-workflows:
-  research:
-    pool: {tokens: 100000, total: 64}
-`
-	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := captureWarnings(t)
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf := c.Workflows["research"]
-	if wf.Pool.Tokens != 100000 {
-		t.Errorf("pool.tokens = %d, want 100000 (local lower honored)", wf.Pool.Tokens)
-	}
-	if wf.Pool.Total != 8 {
-		t.Errorf("pool.total = %d, want 8 (local raise ignored)", wf.Pool.Total)
-	}
-	if w := warnings(); !strings.Contains(w, "research") {
-		t.Errorf("expected a warning naming the loosened workflow; got %q", w)
 	}
 }
 
@@ -1509,105 +1249,6 @@ func TestDefaultContextRelevanceOn(t *testing.T) {
 
 // --- change 0026: pipeline.synthesis caps config surface ---
 
-// TestDefaultPipelineSynthesisCaps asserts the conservative built-in defaults
-// for the pipeline synthesis caps are present after Default().
-func TestDefaultPipelineSynthesisCaps(t *testing.T) {
-	s := Default().Pipeline.Synthesis
-	if s.MaxSteps != 50 {
-		t.Errorf("MaxSteps = %d, want 50", s.MaxSteps)
-	}
-	if s.MaxFanout != 10 {
-		t.Errorf("MaxFanout = %d, want 10", s.MaxFanout)
-	}
-	if s.MaxDepth != 4 {
-		t.Errorf("MaxDepth = %d, want 4", s.MaxDepth)
-	}
-	if s.MaxAttempts != 3 {
-		t.Errorf("MaxAttempts = %d, want 3", s.MaxAttempts)
-	}
-}
-
-// TestLoadPipelineSynthesisBlock asserts the pipeline: { synthesis: {...} }
-// block unmarshals from a trusted home config and overrides the defaults.
-func TestLoadPipelineSynthesisBlock(t *testing.T) {
-	c := loadHomeConfig(t, `
-pipeline:
-  synthesis:
-    max_steps: 20
-    max_fanout: 6
-    max_depth: 3
-    max_attempts: 2
-`)
-	s := c.Pipeline.Synthesis
-	if s.MaxSteps != 20 {
-		t.Errorf("MaxSteps = %d, want 20", s.MaxSteps)
-	}
-	if s.MaxFanout != 6 {
-		t.Errorf("MaxFanout = %d, want 6", s.MaxFanout)
-	}
-	if s.MaxDepth != 3 {
-		t.Errorf("MaxDepth = %d, want 3", s.MaxDepth)
-	}
-	if s.MaxAttempts != 2 {
-		t.Errorf("MaxAttempts = %d, want 2", s.MaxAttempts)
-	}
-}
-
-// TestLocalPipelineSynthesisTightenOnly asserts the ADR-0006 trust boundary for
-// the repo-plantable .fuse.local.yml on the pipeline caps: it may LOWER a cap
-// (tighten) but a value that would LOOSEN it (raise the cap) is ignored, keeping
-// the trusted home-file value, and a warning is emitted for the loosened axis.
-func TestLocalPipelineSynthesisTightenOnly(t *testing.T) {
-	cwd := chdirTemp(t)
-	home := filepath.Join(cwd, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	// Trusted home file establishes the baseline caps.
-	trusted := `
-pipeline:
-  synthesis:
-    max_steps: 30
-    max_fanout: 8
-    max_depth: 4
-    max_attempts: 3
-`
-	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Untrusted local file tries to TIGHTEN max_steps (30 -> 10) and LOOSEN
-	// max_fanout (8 -> 20).
-	local := `
-pipeline:
-  synthesis:
-    max_steps: 10
-    max_fanout: 20
-`
-	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := captureWarnings(t)
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := c.Pipeline.Synthesis
-	if s.MaxSteps != 10 {
-		t.Errorf("MaxSteps = %d, want 10 (local tighten honored)", s.MaxSteps)
-	}
-	if s.MaxFanout != 8 {
-		t.Errorf("MaxFanout = %d, want 8 (local loosening ignored)", s.MaxFanout)
-	}
-	if w := warnings(); !strings.Contains(w, "pipeline.synthesis.max_fanout") {
-		t.Errorf("expected a warning naming the loosened pipeline cap; got %q", w)
-	}
-}
-
 // TestTightenNumeric pins the extracted ADR-0006 tighten-only helper directly,
 // covering every branch for both int and float64 axes. This is the single
 // source of truth the throughput/pipeline/queue_bound/tool_timeout merges now
@@ -1661,109 +1302,6 @@ func TestTightenNumeric(t *testing.T) {
 			t.Errorf("untrusted float raise should be reported and dropped: cur=%v", cur)
 		}
 	})
-}
-
-// TestLoopServerAuthLoadsFromTrustedHome asserts the loop_server block (bearer
-// token→principal map + lease TTL) is honored from the trusted ~/.fuse/config.yml.
-func TestLoopServerAuthLoadsFromTrustedHome(t *testing.T) {
-	cwd := chdirTemp(t)
-	home := filepath.Join(cwd, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	homeCfg := `
-loop_server:
-  lease_ttl: "45s"
-  auth:
-    - token: tok-a
-      tenant: acme
-      subject: alice
-    - token: tok-b
-      subject: bob
-`
-	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(homeCfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.LoopServer.LeaseTTL != "45s" {
-		t.Errorf("lease_ttl = %q, want 45s", c.LoopServer.LeaseTTL)
-	}
-	if len(c.LoopServer.Auth) != 2 {
-		t.Fatalf("auth entries = %d, want 2", len(c.LoopServer.Auth))
-	}
-	if c.LoopServer.Auth[0].Token != "tok-a" || c.LoopServer.Auth[0].Tenant != "acme" || c.LoopServer.Auth[0].Subject != "alice" {
-		t.Errorf("auth[0] = %+v, want {tok-a acme alice}", c.LoopServer.Auth[0])
-	}
-	if c.LoopServer.Auth[1].Token != "tok-b" || c.LoopServer.Auth[1].Tenant != "" || c.LoopServer.Auth[1].Subject != "bob" {
-		t.Errorf("auth[1] = %+v, want {tok-b \"\" bob}", c.LoopServer.Auth[1])
-	}
-}
-
-// TestLoopServerAuthIgnoredFromUntrustedLocal asserts a repo-plantable
-// .fuse.local.yml CANNOT mint bearer credentials: its loop_server block is dropped
-// and a warning names it.
-func TestLoopServerAuthIgnoredFromUntrustedLocal(t *testing.T) {
-	cwd := chdirTemp(t)
-	home := filepath.Join(cwd, "home")
-	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	os.Unsetenv("LLM_GATEWAY_URL")
-	os.Unsetenv("LLM_GATEWAY_KEY")
-
-	local := `
-loop_server:
-  auth:
-    - token: evil
-      tenant: acme
-      subject: attacker
-`
-	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := captureWarnings(t)
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.LoopServer.Auth) != 0 {
-		t.Fatalf("untrusted loop_server.auth must be dropped, got %+v", c.LoopServer.Auth)
-	}
-	if !strings.Contains(warnings(), "loop_server") {
-		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
-	}
-}
-
-// TestLoopServerLeaseTTLValidation asserts Config.Validate rejects a malformed
-// lease_ttl (a typo without a unit) and accepts a valid one / an empty one.
-func TestLoopServerLeaseTTLValidation(t *testing.T) {
-	bad := Default()
-	bad.LoopServer.LeaseTTL = "30" // no unit
-	if err := bad.Validate(); err == nil {
-		t.Fatal("Validate must reject lease_ttl \"30\" (no unit)")
-	}
-
-	good := Default()
-	good.LoopServer.LeaseTTL = "30s"
-	if err := good.Validate(); err != nil {
-		t.Fatalf("Validate rejected a valid lease_ttl: %v", err)
-	}
-
-	empty := Default()
-	empty.LoopServer.LeaseTTL = ""
-	if err := empty.Validate(); err != nil {
-		t.Fatalf("Validate rejected an empty lease_ttl: %v", err)
-	}
 }
 
 // TestAutoLooseningKeys_AllowPushWriteRoots (change 0068) proves the two new
@@ -1828,4 +1366,65 @@ permissions:
 			t.Errorf("warning %q does not name permissions.auto", w)
 		}
 	})
+}
+
+// TestLoadFullThroughputSketchRoundTrips parses the spec's full config sketch
+// and asserts every new knob resolves: queue_bound, throughput.{rpm,tpm,session}
+// with a per-provider override.
+func TestLoadFullThroughputSketchRoundTrips(t *testing.T) {
+	c := writeHomeConfig(t, `
+agents:
+  max_concurrent: 16
+  max_spawns: 64
+  queue_bound: 2.0
+throughput:
+  requests_per_minute: 120
+  tokens_per_minute: 90000
+  session_tokens: 1000000
+  providers:
+    deepseek:
+      requests_per_minute: 60
+      tokens_per_minute: 40000
+`)
+
+	if c.Agents.QueueBound != 2.0 {
+		t.Errorf("Agents.QueueBound = %v, want 2.0", c.Agents.QueueBound)
+	}
+	if c.Throughput.RequestsPerMinute != 120 {
+		t.Errorf("Throughput.RequestsPerMinute = %d, want 120", c.Throughput.RequestsPerMinute)
+	}
+	if c.Throughput.TokensPerMinute != 90000 {
+		t.Errorf("Throughput.TokensPerMinute = %d, want 90000", c.Throughput.TokensPerMinute)
+	}
+	if c.Throughput.SessionTokens != 1000000 {
+		t.Errorf("Throughput.SessionTokens = %d, want 1000000", c.Throughput.SessionTokens)
+	}
+	dp, ok := c.Throughput.Providers["deepseek"]
+	if !ok {
+		t.Fatalf("Throughput.Providers missing deepseek; got %v", c.Throughput.Providers)
+	}
+	if dp.RequestsPerMinute != 60 {
+		t.Errorf("deepseek RequestsPerMinute = %d, want 60", dp.RequestsPerMinute)
+	}
+	if dp.TokensPerMinute != 40000 {
+		t.Errorf("deepseek TokensPerMinute = %d, want 40000", dp.TokensPerMinute)
+	}
+}
+
+// TestAbsentThroughputAndQueueBoundAreZero asserts a config that mentions none
+// of the new knobs leaves them at their zero values (Acceptance 5 tail: absent
+// config ⇒ byte-identical behavior). QueueBound 0 = unset (default 2.0 applied
+// where consumed), rpm/tpm/session 0 = unlimited/unset.
+func TestAbsentThroughputAndQueueBoundAreZero(t *testing.T) {
+	c := writeHomeConfig(t, "max_turns: 30\n")
+
+	if c.Agents.QueueBound != 0 {
+		t.Errorf("Agents.QueueBound = %v, want 0 (unset)", c.Agents.QueueBound)
+	}
+	if c.Throughput.RequestsPerMinute != 0 || c.Throughput.TokensPerMinute != 0 || c.Throughput.SessionTokens != 0 {
+		t.Errorf("Throughput = %+v, want all-zero (unset)", c.Throughput)
+	}
+	if len(c.Throughput.Providers) != 0 {
+		t.Errorf("Throughput.Providers = %v, want empty (unset)", c.Throughput.Providers)
+	}
 }

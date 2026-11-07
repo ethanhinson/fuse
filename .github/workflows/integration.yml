@@ -3,29 +3,7 @@ name: Integration
 on: [push, pull_request]
 
 jobs:
-  # Permanent, hermetic observability proof. External Compose remains an explicit
-  # operator smoke target; CI acceptance uses in-memory exporters and real HTTP
-  # handlers so a green result cannot depend on a monitoring backend.
-  observability-acceptance:
-    runs-on: ubuntu-latest
-    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
-    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Run hermetic observability acceptance
-        run: make observability-acceptance
-
-      - name: Run focused observability race lane
-        run: make observability-race
-
-  # Race-detector unit suite. The platform's core value is concurrent
-  # multi-agent execution (scheduler, spawn tree, blackboard), so the full unit
+  # Race-detector unit suite. Subagents run concurrently (scheduler, spawn tree), so the full unit
   # suite must run under -race on every push/PR. This is deliberately Docker-free
   # and fast, separate from the heavier MCP integration job below.
   unit-race:
@@ -40,82 +18,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # helm is a TEST DEPENDENCY, not just a release one: deploy/charts'
-      # `helm lint` + `helm template` gate skips loudly when helm is absent, and
-      # a skip in CI is indistinguishable from a pass in the summary. Installing
-      # it here is what makes `go test -race ./...` actually exercise the chart.
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.15.3
-
       - name: Run unit tests with race detector
         run: go test -race ./...
 
-  # End-to-end egress datapath proof (change 0064). Starts a REAL --network none
-  # container on the runner's native-Linux Docker and asserts the full datapath:
-  # a declared destination is reachable through the mounted UNIX socket + fuse
-  # forwarder + host proxy, while an undeclared one is refused. This is the check
-  # no unit test can reach and that Docker Desktop for macOS cannot satisfy (its
-  # VM file-sharing layer does not relay a host UNIX socket bind-mount) — so it
-  # is proven here, on a native-Linux daemon, rather than on a developer's Mac.
-  egress-datapath:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Pre-pull the default container image
-        run: docker pull alpine:3.20
-
-      - name: Run end-to-end egress datapath proof
-        run: make egress-datapath
-
-  # Permanent headless-browser reconnect lane for @fuse/sdk (change 0056). Drives the REAL
-  # Wander example app in headless chromium against a REAL `fuse loop-serve-net` backend
-  # (scripted LLM_GATEWAY_URL double, never Claude), kills the network mid-stream, and
-  # asserts transparent resume with no-loss/no-dup. It is the enforced successor to the
-  # deferred manual real-browser proof at #50/#55. The lane hard-fails (never green-skips)
-  # when its toolchain is absent, so a green suite can never hide an unexercised browser path.
-  browser-acceptance:
-    runs-on: ubuntu-latest
-    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
-    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      # esbuild (used by examples/wander/build.sh to bundle @fuse/sdk for the browser) lives
-      # in the repo npm workspace.
-      - name: Install npm workspace deps
-        run: npm install
-
-      - name: Install Playwright chromium
-        run: go run github.com/mxschmitt/playwright-go/cmd/playwright install --with-deps chromium
-
-      - name: Run headless-browser reconnect lane
-        run: go test -tags browser -timeout 300s ./examples/wander/...
-
   # Keeps the RELEASE CONFIG honest on every PR (change 0082). A .goreleaser.yaml
-  # or Dockerfile edit that breaks the release is otherwise discovered at tag
+  # edit that breaks the release is otherwise discovered at tag
   # time, when the only way out is a yanked release and a re-tag. So the whole
   # config is parsed and a full snapshot release is built here, on every push
   # and PR, and the archive-layout invariant is ASSERTED rather than assumed.
   #
-  # `--skip=docker` keeps PR CI registry- and buildx-free; the Docker path is
-  # separately proven by egress-datapath above, and the image build itself is
-  # proven by the first real tag. Nothing here publishes anything.
+  # Nothing here publishes anything.
   #
   # This job HARD-FAILS when a tool or artifact is missing — it never
   # green-skips. Per the `smoke-over-fake-backend-proves-wire-not-system`
@@ -142,13 +54,6 @@ jobs:
           version: '~> v2'
           install-only: true
 
-      # Pinned to the same helm the release job uses, so a chart that renders
-      # here renders there. `helm` is also what deploy/charts' Go gate shells
-      # out to, and a dry run without it would prove nothing about the chart.
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.15.3
-
       # `goreleaser check` exits NON-ZERO on any deprecated key, so this doubles
       # as a deprecation gate. When it fails, fix the config forward to the v2
       # spelling — never re-introduce the deprecated key to quiet it.
@@ -156,14 +61,9 @@ jobs:
         run: goreleaser check
 
       - name: Build a snapshot release
-        run: goreleaser release --snapshot --clean --skip=publish,docker
+        run: goreleaser release --snapshot --clean --skip=publish
 
       # THE ARCHIVE-LAYOUT INVARIANT (documented at the top of .goreleaser.yaml).
-      # A darwin archive must carry `fuse` AND BOTH linux forwarders at its root,
-      # because cmd/fuse/sandbox.go resolves the forwarder by the SANDBOX IMAGE's
-      # arch, not the host's. Dropping one turns `egress.mode: enforce` into
-      # deny-all, silently. darwin/arm64 is checked because it is the case where
-      # every binary in the archive is for a different platform than the archive.
       - name: Assert the archive-layout invariant
         run: |
           set -euo pipefail
@@ -182,9 +82,8 @@ jobs:
           members="$(tar tzf "${archive}")"
           echo "${members}"
           status=0
-          for want in fuse fuse-egress-forward-linux-amd64 fuse-egress-forward-linux-arm64; do
-            # Anchored: `fuse` must be the archive-root entry `fuse`, not a
-            # prefix of `fuse-egress-forward-linux-amd64` or a nested path.
+          for want in fuse; do
+            # Anchored: `fuse` must be the archive-root entry, not a nested path.
             if printf '%s\n' "${members}" | grep -qxF "${want}"; then
               echo "  ok: ${want}"
             else
@@ -193,74 +92,6 @@ jobs:
             fi
           done
           exit "${status}"
-
-      # THE DEPLOYMENT ARTIFACTS (docket change 0076), same rationale as the
-      # release config above: a chart or compose file that only breaks at tag
-      # time costs a yanked release, so both are rendered on every PR.
-      #
-      # HARD-FAIL, never green-skip — this job's documented posture. Both tools
-      # are installed by steps above, so an absent one is a broken workflow and
-      # must fail here rather than be tolerated.
-      #
-      # `--version 0.0.0-dev` mirrors Chart.yaml's in-tree placeholder: the real
-      # version is stamped from the tag by release.yml and is not knowable here.
-      # NOTHING in this step pushes, and no packaged chart leaves the runner.
-      - name: Lint, render, and package the Helm chart
-        run: |
-          set -euo pipefail
-
-          command -v helm >/dev/null || {
-            echo "::error::helm is not on PATH — the setup-helm step above must have failed. This job hard-fails rather than skipping." >&2
-            exit 1
-          }
-          helm version
-
-          # The minimal valid values set: BOTH mandatory guards satisfied (an
-          # auth surface and a DSN) and nothing else, so a new guard that fires
-          # on the defaults is caught here instead of at install time.
-          minimal=(
-            --set 'postgres.dsn=postgres://fuse:dry-run@postgres:5432/fuse?sslmode=disable'
-            --set auth.allowDevToken=true
-          )
-
-          helm lint deploy/charts/fuse "${minimal[@]}"
-          helm template fuse-dry-run deploy/charts/fuse "${minimal[@]}" >/dev/null
-
-          # Packaged into its OWN directory, never dist/: dist/ belongs to
-          # GoReleaser and is globbed by the two steps around this one
-          # (fuse_*_darwin_arm64.tar.gz above, fuse_*_checksums.txt below).
-          # A stray artifact there is a trap for a future glob widening.
-          out="${RUNNER_TEMP}/chart-dry-run"
-          rm -rf "${out}" && mkdir -p "${out}"
-
-          helm package deploy/charts/fuse \
-            --version 0.0.0-dev --app-version 0.0.0-dev \
-            --destination "${out}"
-
-          chart="${out}/fuse-0.0.0-dev.tgz"
-          [ -f "${chart}" ] || {
-            echo "::error::expected ${chart} after 'helm package' — not found. release.yml's publish step asserts the same <name>-<version>.tgz shape, so this is a real break." >&2
-            ls -la "${out}" >&2
-            exit 1
-          }
-          echo "ok: packaged ${chart}"
-
-      # `config` parses, merges the `include:`d observability stack, and
-      # interpolates — the whole of what a broken compose file gets wrong —
-      # without pulling an image or starting a container. Bring-up stays an
-      # operator-only smoke (`make compose-smoke`).
-      #
-      # The stack uses `include:`, which needs Compose v2.20+. ubuntu-latest
-      # ships well past that, and `docker compose version` is printed first so a
-      # future runner-image regression names the version in the log instead of
-      # surfacing as an inscrutable parse error. No guard beyond that: an absent
-      # compose fails here under `set -e`, which is this job's posture.
-      - name: Validate the compose stack
-        run: |
-          set -euo pipefail
-          docker compose version
-          docker compose -f deploy/compose/docker-compose.yml config >/dev/null
-          echo "ok: deploy/compose/docker-compose.yml"
 
       # Drive the real installer against the snapshot tree over
       # FUSE_RELEASE_BASE_URL. The test takes the dist dir as $1 and recovers the

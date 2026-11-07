@@ -22,10 +22,9 @@ func shellWithHumanMessaging(t *testing.T) (ShellModel, *agent.HumanBus, *agent.
 	tree.AddNodeForTest(child)
 	reg.Register("coder-1", "coder")
 	bus := agent.NewHumanBus(tree)
-	bb := agent.NewBlackboard(tree)
 
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
-	m = m.WithTree(tree).WithBlackboard(bb).WithHumanMessaging(bus, reg, nil)
+	m = m.WithTree(tree).WithHumanMessaging(bus, reg, nil)
 	m.running = true // an agent is busy, so bare prose queues
 	return m, bus, tree
 }

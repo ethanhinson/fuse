@@ -5,8 +5,8 @@
 # Everything this workflow runs — the whole .goreleaser.yaml, the archive layout,
 # the installer — is already exercised on every PR by `release-dry-run` in
 # integration.yml. What is UNIQUE to this workflow, and therefore first proven by
-# the first real tag, is the publishing half: the GHCR push, the docker manifests,
-# and the two provenance attestations.
+# the first real tag, is the publishing half: the GitHub release and the provenance
+# attestation.
 name: Release
 
 on:
@@ -17,7 +17,7 @@ on:
 # Least privilege at workflow scope: the floor every job inherits is read-only.
 # The publishing grants live on the `release` job alone (see below) so that the
 # `test` job — which executes every test in the repo, plus whatever those tests
-# shell out to — cannot reach the release, the registry, or the signing token.
+# shell out to — cannot reach the release or the signing token.
 permissions:
   contents: read
 
@@ -37,14 +37,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # helm is a TEST DEPENDENCY, not just a release one: deploy/charts'
-      # `helm lint` + `helm template` gate skips loudly when helm is absent, and
-      # a skip in CI is indistinguishable from a pass in the summary. Installing
-      # it here is what makes `go test ./...` actually exercise the chart.
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.15.3
-
       - name: Run unit tests with race detector
         run: go test -race ./...
 
@@ -57,7 +49,6 @@ jobs:
     # not listed here is `none`.
     permissions:
       contents: write # create the GitHub release and upload archives
-      packages: write # push images to ghcr.io
       id-token: write # OIDC token the attestation action signs with
       attestations: write # write the provenance attestations themselves
     steps:
@@ -70,18 +61,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      # linux/arm64 images are built on an amd64 runner, so the arm64 layer
-      # needs QEMU emulation.
-      - uses: docker/setup-qemu-action@v3
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -98,144 +77,3 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*_checksums.txt
-
-      # Provenance needs the image DIGEST, not a tag — a tag is mutable and can
-      # be re-pointed after the attestation is written.
-      #
-      # dist/artifacts.json carries one entry per pushed manifest with
-      # `type: "Docker Manifest"`, `name` = the pushed reference, and the digest
-      # in `extra.Digest`. That field is the primary route.
-      #
-      # CAVEAT, stated plainly: the extra.Digest assumption could not be proven
-      # before the first tag, because `--skip=publish` (what PR CI runs) emits no
-      # manifest entries in artifacts.json at all. So the `imagetools inspect`
-      # fallback below is the real coverage, and the first tag is its first proof.
-      # Either route yielding a digest is a success; NEITHER yielding one is a
-      # hard failure, so a GoReleaser field rename is loud rather than silently
-      # attesting nothing.
-      #
-      # SECOND COUPLING, same shape: the image reference below is HARDCODED to
-      # match .goreleaser.yaml, which hardcodes ghcr.io/ethanhinson/fuse in every
-      # image_templates and docker_manifests entry. Deriving it from
-      # ${GITHUB_REPOSITORY} instead would agree only by coincidence of the repo
-      # slug: a rename or a fork would send this lookup after an image GoReleaser
-      # never pushed, and the failure would surface as the generic "could not
-      # resolve a digest ... by either route" rather than naming the mismatch.
-      # If the image name changes, it changes in BOTH files.
-      - name: Resolve the published image digest
-        id: image
-        env:
-          VERSION_TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-
-          [ -f dist/artifacts.json ] || {
-            echo "::error::dist/artifacts.json is missing — did goreleaser run?" >&2
-            exit 1
-          }
-
-          # The version-pinned manifest (ghcr.io/...:X.Y.Z), never a floating
-          # tag: both :latest and :X.Y are skip_push:auto and are absent for a
-          # pre-release tag. :X.Y.Z is the only manifest every tag publishes.
-          version="${VERSION_TAG#v}"
-          image_name="ghcr.io/ethanhinson/fuse" # must match .goreleaser.yaml
-          image="${image_name}:${version}"
-
-          name="$(jq -r --arg img "${image}" \
-            'map(select(.type == "Docker Manifest" and .name == $img)) | .[0].name // empty' \
-            dist/artifacts.json)"
-          digest="$(jq -r --arg img "${image}" \
-            'map(select(.type == "Docker Manifest" and .name == $img)) | .[0].extra.Digest // empty' \
-            dist/artifacts.json)"
-
-          if [ -n "${digest}" ]; then
-            echo "digest from artifacts.json extra.Digest: ${digest}"
-          else
-            echo "::warning::no extra.Digest for ${image} in dist/artifacts.json (manifest entry ${name:-absent}) — falling back to 'docker buildx imagetools inspect'. If artifacts.json has a manifest entry but no extra.Digest, GoReleaser renamed the field: fix the jq path above." >&2
-            # `|| true`: a failing inspect must fall through to the explicit
-            # "neither route" error below, not die under `set -e` with only
-            # docker's own message. The empty-digest guard is what reports it.
-            digest="$(docker buildx imagetools inspect "${image}" --format '{{ .Manifest.Digest }}' || true)"
-            echo "digest from imagetools inspect: ${digest:-<none>}"
-          fi
-
-          case "${digest}" in
-          sha256:*) ;;
-          *)
-            echo "::error::could not resolve a digest for ${image} by either route (got '${digest}'); refusing to attest nothing." >&2
-            jq -r '.[] | "\(.type)\t\(.name)"' dist/artifacts.json >&2 || true
-            exit 1
-            ;;
-          esac
-
-          {
-            printf 'name=%s\n' "${image_name}"
-            printf 'digest=%s\n' "${digest}"
-          } >>"${GITHUB_OUTPUT}"
-
-      - name: Attest the container image
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ steps.image.outputs.name }}
-          subject-digest: ${{ steps.image.outputs.digest }}
-          push-to-registry: true
-
-      # THE HELM CHART, published as an OCI artifact to the same GHCR namespace
-      # (docket change 0076). This step is placed last, after both attestations,
-      # so a chart-push failure can never abort the release's provenance half.
-      #
-      # No new grants are needed: `packages: write` (above) and the
-      # docker/login-action step at step 5 already cover an OCI push. helm 3.8+
-      # reads the docker config that action writes, but the login is made
-      # EXPLICIT below rather than inherited — an inherited credential is one
-      # `docker/login-action` refactor away from a confusing 401 at tag time.
-      #
-      # VERSION RULES, matching the image exactly:
-      #   * the chart version IS the tag with its leading `v` stripped, stamped
-      #     over Chart.yaml's in-tree 0.0.0-dev placeholder;
-      #   * a pre-release tag (v1.2.3-rc.1) passes straight through and
-      #     publishes a pre-release chart version — SemVer pre-release ordering
-      #     keeps `helm install` off it unless asked for by name;
-      #   * there is NO floating chart tag. Same rule as the image's `:latest`:
-      #     a mutable pointer at an immutable artifact is how an operator ends
-      #     up running something nobody tagged.
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.15.3
-
-      - name: Package and push the Helm chart
-        env:
-          VERSION_TAG: ${{ github.ref_name }}
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          version="${VERSION_TAG#v}"
-
-          printf '%s' "${GHCR_TOKEN}" |
-            helm registry login ghcr.io -u "${GHCR_USER}" --password-stdin
-
-          # Packaged OUTSIDE dist/: dist/ is GoReleaser's, and the archive
-          # attestation above globs `dist/*.tar.gz`. The chart is attested by
-          # neither attestation (it is an OCI artifact, not a release asset), so
-          # dropping a .tgz in there would only risk a future glob picking it up.
-          out="${RUNNER_TEMP}/chart"
-          rm -rf "${out}" && mkdir -p "${out}"
-
-          helm package deploy/charts/fuse \
-            --version "${version}" --app-version "${version}" \
-            --destination "${out}"
-
-          # Assert the artifact exists before pushing, in the same spirit as
-          # "refusing to attest nothing" above: if `helm package` ever changes
-          # its output naming, this must fail by NAME here rather than as an
-          # opaque `helm push` error on a path that was never written.
-          chart="${out}/fuse-${version}.tgz"
-          [ -f "${chart}" ] || {
-            echo "::error::expected ${chart} after 'helm package' — not found; refusing to push nothing." >&2
-            ls -la "${out}" >&2
-            exit 1
-          }
-
-          helm push "${chart}" oci://ghcr.io/ethanhinson/charts

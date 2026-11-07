@@ -88,10 +88,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// Real tool registry: web_search/web_fetch backed by the configured
 	// provider (lazy — a missing key surfaces the first time a tool runs), plus
 	// the skill tool and codeindex tools.
-	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=false: the
+	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE: the
 	// probe is an operator-local diagnostic run, exactly like one-shot.
-	sb, closeEgress := newSandboxService(cfg, false, stderr)
-	defer closeEgress()
+	sb := newSandboxService(stderr)
 	toolReg := defaultToolRegistry(sb, cfg.Research, set.Lookup)
 	// The bash tool's warm sandbox pool — its Runners and its reaper goroutine — is a
 	// SESSION resource here, not a per-loop one: buildResearchProbeRuntimeDeps hands
@@ -120,30 +119,15 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// Rate gate (change 0036): one shared token bucket for the session, or nil when
 	// no rpm/tpm axis is configured (fast path).
 	rateGate := sessionRateGate(cfg)
-	rootNode := tree.Node(tree.RootID())
-
-	// research-probe IS a research root: activate the research workflow on the
-	// root node through the loop's workflow scope (change 0091), so its whole
-	// subtree is governed by the workflow pool and its typed workers (change
-	// 0034) and the pool is registered with the scheduler (change 0036). Absent a
-	// research workflow (config disabled it) the root stays outside every
-	// workflow and behavior is the pre-0034 freeform fan-out.
-	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
-	if _, ok := cfg.Workflows["research"]; ok {
-		if _, err := scope.activateRoot(rootNode, "research"); err != nil {
-			fmt.Fprintf(stderr, "research-probe: %v\n", err)
-			return 1
-		}
-	}
 
 	// Binding #1b (change 0045): the research-probe path drives the engine through
 	// the in-process Runtime. buildResearchProbeRuntimeDeps holds the spawn factory,
-	// workflow tool wiring, and MultiRenderer construction exactly as before
+	// tool wiring, and MultiRenderer construction exactly as before
 	// (behavior-preserving relocation); the tree is supplied via Deps.Tree so
 	// probe.Summarize still sees it after h.Wait().
 	// Session observability (change 0061): built ONCE here and threaded into the
 	// probe's root and children through the deps seam.
-	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "research-probe")
+	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stderr, "research-probe")
 	if !obsOK {
 		return obsCode
 	}
@@ -151,7 +135,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree,
-		scope: scope, logSink: logSink, traceW: traceW, rateGate: rateGate,
+		logSink: logSink, traceW: traceW, rateGate: rateGate,
 		observer: obs.observer,
 	})
 	rt := runtime.New(deps)

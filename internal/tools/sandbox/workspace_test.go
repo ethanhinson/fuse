@@ -7,17 +7,9 @@ import (
 	"testing"
 )
 
-// resolveWorkspace is the containment algorithm ADR-0044 rests on, promoted out
-// of (*containerHandler).workspace so that EVERY substrate — the container
-// handler and, from change 0075, the remote adapter — resolves a model-supplied
-// working_dir through ONE implementation (change 0075, task 1).
-//
-// The container handler's own containment tests (container_test.go,
-// tenant_root_test.go) are the behaviour-PRESERVATION proof: they exercise this
-// algorithm through Exec and must pass unchanged. What the table below adds is
-// direct coverage of the one axis those tests structurally cannot reach — a
-// mountPoint that is not "/workspace", which is exactly what the remote adapter
-// passes (a Pod's MountRoot()).
+// resolveWorkspace is the containment algorithm ADR-0044 rests on. The table below covers
+// the axis the container tests structurally cannot reach: a mountPoint that is not
+// "/workspace".
 func TestResolveWorkspaceContainment(t *testing.T) {
 	root := t.TempDir()
 	// EvalSymlinks the root: on darwin t.TempDir() lives under /var, a symlink

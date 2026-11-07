@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +17,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
-	"github.com/ethanhinson/fuse/internal/pipeline"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -108,13 +105,7 @@ CORRECT (parallel — all in one response):
 ### Rules
 - Emit ALL spawns as parallel tool calls in one response, then summarise once all results arrive.
 - Never read 3+ files one at a time when you can spawn agents.
-- By default (no ` + "`tools`" + ` argument) the child inherits your FULL tool set and runs to completion; its final assistant message is the result.
-
-### Shared memory across agents (blackboard)
-Children can coordinate through a shared, session-wide blackboard (` + "`blackboard_write` / `blackboard_read` / `blackboard_keys` / `blackboard_wait` / `blackboard_delete`" + `) — the substrate for debate, ensemble, and producer/consumer patterns where children exchange intermediate results.
-- To have children collaborate through the blackboard, DO NOT pass a narrow ` + "`tools`" + ` subset that omits it. A non-empty ` + "`tools`" + ` list that leaves out the ` + "`blackboard_*`" + ` tools WITHHOLDS shared memory from the child, so it cannot read or write the board — a common reason a "debate" produces an empty board.
-- Either omit ` + "`tools`" + ` entirely (the child inherits the blackboard), or explicitly include the ` + "`blackboard_*`" + ` tools you need in the subset.
-- Pattern: instruct each child to WRITE its findings/position to a shared key (e.g. ` + "`review/<name>`" + `), then after they return, READ ` + "`review/*`" + ` and synthesise.`
+- By default (no ` + "`tools`" + ` argument) the child inherits your FULL tool set and runs to completion; its final assistant message is the result.`
 
 // headlessTurnBackstop is the generous default cap applied to headless entry
 // points (one-shot, non-TTY, mcp-server, research-probe) when max_turns is
@@ -176,7 +167,7 @@ func loopApprovalFor(approve permissions.Approver, interactive bool) func(contex
 
 // registryFromConfig builds a model.Registry, starting from the built-in
 // default and overlaying any config-defined entries. The rule lives in
-// internal/configcheck (change 0084) so the harness-spec validator resolves
+// internal/configcheck (change 0084) so every validator resolves
 // aliases exactly as the CLI does.
 func registryFromConfig(cfg config.Config) *model.Registry {
 	return configcheck.Registry(cfg)
@@ -257,7 +248,7 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 // segSink is the loop's own SegmentSink (change 0046 — threaded as a value instead
 // of the retired process-global currentSegmentSink()); nil ⇒ the agent's no-op
 // default (persists nothing, omits the recovery pointer). The interactive shell
-// and the loop server install a real sink; one-shot and probe pass nil.
+// installs a real sink; one-shot and probe pass nil.
 func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, traceW io.Writer, gate model.RateGate, segSink agent.SegmentSink) {
 	s := cfg.Context.Summarization
 	if !s.Enabled {
@@ -445,13 +436,6 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 	if sm != nil {
 		opts = append(opts, permissions.WithSessionMode(sm))
 	}
-	// Complete mediation (change #52 D5): when identity propagation is active,
-	// wire the config-driven target-allowlist mediator so a schema-valid MCP tool
-	// call to an undeclared/unknown downstream is denied terminally — even in
-	// ModeOff. Nil (inert) otherwise, keeping pre-#52 behavior byte-identical.
-	if med := buildTargetMediator(cfg); med != nil {
-		opts = append(opts, med)
-	}
 	return permissions.New(cfg.Permissions, toolReg, approve, opts...)
 }
 
@@ -570,8 +554,7 @@ func childToolRegistry(parent *tools.Registry, names []string) (*tools.Registry,
 // means "inherit all" (the child gets everything the parent had, including
 // spawn_agent); a non-empty request grants spawn_agent only when it is named.
 // This is the change 0034 folded-in fix: a parent can now withhold spawn_agent
-// from a child by passing a subset that omits it, and worker allowlists compile
-// down to exactly this decision.
+// from a child by passing a subset that omits it.
 func shouldWireChildSpawn(requested []string) bool {
 	if len(requested) == 0 {
 		return true
@@ -583,55 +566,6 @@ func shouldWireChildSpawn(requested []string) bool {
 	}
 	return false
 }
-
-// wireChildBlackboard registers the blackboard tools on a child's registry with
-// provenance bound to childNode (change 0023, Task 4). The tools are ALWAYS
-// wired — not spawn-gated — because a child that cannot spawn still shares the
-// blackboard. The one exception is an explicit tools subset that omits them: an
-// empty requested list is a full clone (force-include, child-bound); a non-empty
-// subset includes a blackboard tool only when it names it, and even then the
-// version copied from the parent carries the PARENT's provenance, so we
-// re-register the child-bound version. Named-but-child-bound and
-// unnamed-therefore-absent are both honored by rebuilding from scratch: drop the
-// inherited copies, then add back only the ones the subset selects.
-func wireChildBlackboard(childToolReg *tools.Registry, bb *agent.Blackboard, childNode *agent.AgentNode, requested []string) {
-	childTools := tools.NewBlackboardTools(bb.ForNode(childNode))
-	fullClone := len(requested) == 0
-	for _, t := range childTools {
-		name := t.Name()
-		if fullClone || contains(requested, name) {
-			// Force-include (clone) or the subset names it: bind to the child.
-			childToolReg.Register(t)
-		} else {
-			// A subset that omits this blackboard tool withholds it from the child.
-			childToolReg.Unregister(name)
-		}
-	}
-}
-
-// wireRootBlackboard registers the five blackboard tools on a root tool registry,
-// bound to the root node for provenance. It is the root-side counterpart to
-// wireChildBlackboard: every agent entry point (main.go run(), shell.go,
-// research_probe.go) calls it after building its root registry, so the shared
-// call site is the single place root blackboard wiring lives — a dropped call in
-// any one entry point is a visible divergence, and the wiring assertion test
-// exercises this exact helper (learning patch-every-cloned-child-builder).
-func wireRootBlackboard(toolReg *tools.Registry, bb *agent.Blackboard, rootNode *agent.AgentNode) {
-	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
-		toolReg.Register(t)
-	}
-}
-
-// pipelinePlanKey is the blackboard key a synthesized pipeline's generated DAG
-// is written to before it runs, so a human (or a downstream tool) can inspect
-// exactly what was composed (change 0026).
-const pipelinePlanKey = "pipeline.plan"
-
-// pipelineWriterID/Label stamp provenance on the pipeline.plan write.
-const (
-	pipelineWriterID    = "pipeline"
-	pipelineWriterLabel = "pipeline"
-)
 
 // cmdSpawnHandle adapts an agent.AgentHandle to the tools.SpawnHandle seam (change
 // 0044): it holds the handle plus the slot-yield context, and performs the
@@ -666,9 +600,7 @@ func (h cmdSpawnHandle) WaitResult() tools.SpawnResult {
 // awaits, rather than pre-awaiting and collapsing the handle to a string. The
 // spawner-building is identical at every entry point, so it lives here; each site
 // builds its own spawner (with its own child builder) and wraps it through this
-// adapter. Change 0026 extracted it so the same spawner can also back the
-// pipeline_run tool; change 0044 made the seam handle-returning so the same spawner
-// can back a location-transparent Runtime later.
+// adapter.
 func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *agent.AgentNode) tools.SpawnFunc {
 	return func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
 		opts := agent.SpawnOpts{
@@ -677,8 +609,6 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 			SystemPrompt: req.SystemPrompt,
 			ModelID:      req.Model,
 			Tools:        req.Tools,
-			Worker:       req.Worker,
-			Workflow:     req.Workflow,
 			Role:         req.Role,
 			Expects:      req.Expects,
 		}
@@ -688,393 +618,6 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 		}
 		return cmdSpawnHandle{ctx: ctx, handle: handle, sched: sched, parentNode: parentNode}, nil
 	}
-}
-
-// makePipelineRunFn returns the authored-pipeline seam (change 0026): it parses,
-// validates (layers 1–2, no synthesis caps), and runs a caller-authored pipeline
-// over a spawner built for node, sharing state through bb. It returns a
-// human-readable terminal status line; pipeline.status is written by Run.
-//
-// It yields the CALLING node's scheduler slot around the whole pipeline run,
-// mirroring spawnFuncFrom: when pipeline_run is invoked from a depth≥1 child
-// (which holds a slot), the pipeline spawns step children from the same pool, so
-// a caller that keeps its slot while blocked on those children deadlocks under
-// slot pressure (learning: slot-cap-yield-while-blocked-on-children).
-//
-// With a workflow argument (change 0091) the steps run under a fresh
-// coordinator node that roots that workflow, through runWF; the argument
-// governs and overwrites the definition's advisory workflow field. A nil runWF
-// (a context with no workflow scope) refuses a workflow request.
-//
-// A step that names a worker needs a workflow to bind it: the argument, the
-// definition's field, or the workflow governing node (through governing). With
-// none, the pipeline is refused before any step spawns and before the slot
-// yield (agent.ErrWorkerOutsideWorkflow).
-//
-// scope supplies the role definitions and workflow configs (change 0115); nil
-// means no roles are defined. A step naming an undefined role is refused as a
-// parse error; a step naming a role the steps' workflow (the resolved
-// argument or definition field, else the one governing node) does not offer
-// is refused too. Both refusals come before the slot yield and any spawn, so a
-// hopeless step never fails mid-run after upstream steps spent quota.
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup, scope *workflowScope) tools.PipelineRunFunc {
-	var roles map[string]config.RoleConfig
-	var workflows map[string]config.WorkflowConfig
-	if scope != nil {
-		roles, workflows = scope.roles, scope.workflows
-	}
-	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
-		p, err := pipeline.Parse(definition)
-		if err != nil {
-			return "", fmt.Errorf("parse: %w", err)
-		}
-		if err := pipeline.CheckRoles(p, sortedRoleNames(roles)); err != nil {
-			return "", fmt.Errorf("parse: %w", err)
-		}
-		// Authored path: structural validation only (no synthesis caps).
-		if err := pipeline.Validate(p, pipeline.Caps{}); err != nil {
-			return "", fmt.Errorf("validate: %w", err)
-		}
-		workflow, err = resolvePipelineWorkflow(workflow, p.Workflow)
-		if err != nil {
-			return "", err
-		}
-		if workflow != "" && runWF == nil {
-			return "", workflowPipelinesUnavailable(workflow)
-		}
-		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
-			return "", err
-		}
-		if err := refuseUnofferedRoleSteps(p, roles, workflows, workflow, node, governing); err != nil {
-			return "", err
-		}
-		sched.YieldSlot(node)
-		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
-		if !sched.UnyieldSlot(ctx, node) {
-			return "", ctx.Err()
-		}
-		if rerr != nil {
-			return "", rerr
-		}
-		return line, nil
-	}
-}
-
-// refuseUnboundWorkerSteps refuses a pipeline whose steps name a worker that
-// no workflow will govern: no workflow argument or definition field, and node
-// outside every workflow subtree. It runs before any step spawns.
-//
-// Role steps are not refused here, because roles are global (change 0115):
-// a role step needs no workflow to bind it. Whether the steps' workflow offers
-// a role is checked before any spawn by refuseUnofferedRoleSteps (and enforced
-// again when the step spawns, by workflowScope.prepareChild's checkRole).
-func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent.AgentNode, governing workflowLookup) error {
-	if workflow != "" {
-		return nil
-	}
-	if governing != nil {
-		if _, ok := governing(node.ID); ok {
-			return nil
-		}
-	}
-	for _, s := range p.Steps {
-		if s.Worker != "" {
-			return fmt.Errorf("%w: step %q names worker %q but no workflow is active; pass workflow or set the definition's workflow field", agent.ErrWorkerOutsideWorkflow, s.Name, s.Worker)
-		}
-	}
-	return nil
-}
-
-// refuseUnofferedRoleSteps refuses a pipeline whose step names a defined role
-// that the workflow its steps will run under does not offer: workflow (the
-// resolved argument or definition field) when set, else the workflow governing
-// node (through governing). With neither, every defined role is offered and
-// nothing is refused here. It runs before the slot yield and any spawn, so the
-// refusal carries its reason instead of a mid-run step failure.
-func refuseUnofferedRoleSteps(p *pipeline.Pipeline, roles map[string]config.RoleConfig, workflows map[string]config.WorkflowConfig, workflow string, node *agent.AgentNode, governing workflowLookup) error {
-	var offered []string
-	where := fmt.Sprintf("workflow %q", workflow)
-	switch {
-	case workflow != "":
-		offered = workflowRoleNames(roles, workflows[workflow])
-	case governing != nil:
-		wf, ok := governing(node.ID)
-		if !ok {
-			return nil
-		}
-		offered, where = workflowRoleNames(roles, wf), "the governing workflow"
-	default:
-		return nil
-	}
-	set := make(map[string]bool, len(offered))
-	for _, n := range offered {
-		set[n] = true
-	}
-	for _, s := range p.Steps {
-		if s.Role == "" || set[s.Role] {
-			continue
-		}
-		list := "none"
-		if len(offered) > 0 {
-			list = strings.Join(offered, ", ")
-		}
-		return fmt.Errorf("step %q: role %q is not available in %s (available: %s)", s.Name, s.Role, where, list)
-	}
-	return nil
-}
-
-// resolvePipelineWorkflow merges the pipeline_run tool argument with the
-// definition's own workflow field. The definition activates its workflow when
-// the argument is absent; the argument wins only when they agree; a conflict is
-// an error, so step worker: names are never silently ignored.
-func resolvePipelineWorkflow(arg, def string) (string, error) {
-	switch {
-	case arg == "":
-		return def, nil
-	case def == "" || def == arg:
-		return arg, nil
-	}
-	return "", fmt.Errorf("workflow conflict: tool argument names %q but the definition names %q", arg, def)
-}
-
-// workflowPipelinesUnavailable is the refusal for a workflow pipeline in a
-// context that wired no workflow runner.
-func workflowPipelinesUnavailable(workflow string) error {
-	return fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
-}
-
-// runPipelineSteps runs p's steps and renders the terminal status line. With no
-// workflow the steps are children of spawner's node, exactly as before change
-// 0091; with one they run under runWF's coordinator, and p.Workflow records it.
-// The caller owns the slot yield around this call.
-func runPipelineSteps(ctx context.Context, p *pipeline.Pipeline, spawner *agent.Spawner, bb *agent.Blackboard, workflow string, runWF workflowRunner) (string, error) {
-	if workflow == "" {
-		st, _ := pipeline.Run(ctx, p, spawner, bb)
-		return pipelineStatusLine(p.Name, st), nil
-	}
-	p.Workflow = workflow
-	return runWF(ctx, "pipeline "+p.Name, workflow, func(ctx context.Context, steps *agent.Spawner) (string, error) {
-		st, _ := pipeline.Run(ctx, p, steps, bb)
-		return pipelineStatusLine(p.Name, st), nil
-	})
-}
-
-// makePipelineSynthFn returns the synthesis seam (change 0026): it synthesizes a
-// pipeline from goal under the config-derived caps, writes the generated DAG to
-// pipeline.plan (best-effort trace alongside), then runs it. confirm is advisory
-// here — headless there is no interactive confirmer, so a synthesized-and-run
-// pipeline proceeds regardless (documented deviation); the flag is plumbed for a
-// future gate. toolNames are the synthesis palette's tools.
-//
-// The palette's workers are computed per call: the argument's workflow workers,
-// else the workers of the workflow governing node (through governing), else
-// none, so the synthesizer is only offered workers something can bind.
-// The role palette is computed per call the same way (change 0115): the
-// argument's or governing workflow's offered roles, else every defined role.
-//
-// With a workflow argument (change 0091) an unknown name is refused before any
-// spawn and the synthesized steps run under runWF's coordinator (the synthesis
-// child itself still runs from the caller's spawner). A nil runWF refuses a
-// workflow request. A synthesized plan whose steps name a worker that no
-// workflow will govern is refused after synthesis (pipeline.plan is already
-// published) but before any step spawns (agent.ErrWorkerOutsideWorkflow).
-func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, toolNames []string, traceW io.Writer, runWF workflowRunner, governing workflowLookup) tools.PipelineSynthFunc {
-	caps := pipeline.Caps{
-		MaxSteps:    cfg.Pipeline.Synthesis.MaxSteps,
-		MaxFanout:   cfg.Pipeline.Synthesis.MaxFanout,
-		MaxDepth:    cfg.Pipeline.Synthesis.MaxDepth,
-		MaxAttempts: cfg.Pipeline.Synthesis.MaxAttempts,
-		RequirePool: true,
-	}
-	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
-		var palette []string
-		var wfCfg *config.WorkflowConfig
-		if workflow == "" && governing != nil {
-			if wf, ok := governing(node.ID); ok {
-				palette = sortedWorkerNames(wf)
-				wfCfg = &wf
-			}
-		}
-		if workflow != "" {
-			if runWF == nil {
-				return "", workflowPipelinesUnavailable(workflow)
-			}
-			wf, ok := cfg.Workflows[workflow]
-			if !ok {
-				return "", unknownWorkflowErr(workflow, sortedWorkflowNames(cfg.Workflows))
-			}
-			palette = sortedWorkerNames(wf)
-			wfCfg = &wf
-			// Admit before synthesizing, as the authored path does before any
-			// spawn: a nested or too-deep request spawns no synthesis child,
-			// spends no quota and publishes no pipeline.plan.
-			if _, err := runWF(ctx, "", workflow, nil); err != nil {
-				return "", err
-			}
-		}
-		synthCaps := caps
-		if workflow != "" {
-			// The argument supplies the pool and overwrites p.Workflow below, so a
-			// synthesized plan that omits the advisory field is not a rejection.
-			synthCaps.RequirePool = false
-		}
-		// Yield the calling node's slot around the whole operation (see
-		// makePipelineRunFn): the synthesis child AND the step children spawn from
-		// the same pool, so a caller (depth≥1) that holds its slot while blocked on
-		// them deadlocks under slot pressure
-		// (learning: slot-cap-yield-while-blocked-on-children).
-		sched.YieldSlot(node)
-		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Roles: synthRolePalette(cfg.Roles, wfCfg), Tools: toolNames}, spawner, synthCaps)
-		if err != nil {
-			if !sched.UnyieldSlot(ctx, node) {
-				return "", ctx.Err()
-			}
-			return "", fmt.Errorf("synthesize: %w", err)
-		}
-		if workflow != "" {
-			// Recorded before publishing so pipeline.plan shows the governing workflow.
-			p.Workflow = workflow
-		}
-		// Publish the generated DAG so it is inspectable before/while it runs.
-		if plan, merr := json.Marshal(p); merr == nil {
-			var v any
-			if json.Unmarshal(plan, &v) == nil {
-				bb.Put(pipelinePlanKey, v, pipelineWriterID, pipelineWriterLabel)
-			}
-			if traceW != nil {
-				fmt.Fprintf(traceW, "[pipeline] synthesized plan for goal %q: %s\n", goal, plan)
-			}
-		}
-		// confirm gate is a no-op headless (no interactive confirmer wired): proceed.
-		_ = confirm
-		// A synthesized plan that names a workflow runs under it even without an
-		// argument, so its step worker: names are honoured. A context with no
-		// workflow scope (nil runWF) keeps the pre-0091 ungoverned behaviour.
-		if workflow == "" && runWF != nil {
-			workflow = p.Workflow
-		}
-		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
-			if !sched.UnyieldSlot(ctx, node) {
-				return "", ctx.Err()
-			}
-			return "", err
-		}
-		// The palette offered every role when no workflow governed, but a plan
-		// that sets its own workflow runs under that narrower one: refuse a role
-		// it does not offer before any step spawns.
-		if err := refuseUnofferedRoleSteps(p, cfg.Roles, cfg.Workflows, workflow, node, governing); err != nil {
-			if !sched.UnyieldSlot(ctx, node) {
-				return "", ctx.Err()
-			}
-			return "", err
-		}
-		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
-		if !sched.UnyieldSlot(ctx, node) {
-			return "", ctx.Err()
-		}
-		if rerr != nil {
-			return "", rerr
-		}
-		return line, nil
-	}
-}
-
-// sortedWorkflowNames returns the configured workflow names, sorted.
-func sortedWorkflowNames(wfs map[string]config.WorkflowConfig) []string {
-	out := make([]string, 0, len(wfs))
-	for n := range wfs {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// sortedWorkerNames returns wf's worker names, sorted (nil when it has none).
-func sortedWorkerNames(wf config.WorkflowConfig) []string {
-	var out []string
-	for n := range wf.Workers {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// synthRolePalette is the synthesis role palette (change 0115): the roles a
-// step may take, as name and description, sorted. Outside a workflow (wf nil)
-// it is every defined role; with one, the roles that workflow offers. Nil when
-// none, so the synthesis prompt is unchanged without roles.
-func synthRolePalette(roles map[string]config.RoleConfig, wf *config.WorkflowConfig) []pipeline.SynthRole {
-	names := sortedRoleNames(roles)
-	if wf != nil {
-		names = workflowRoleNames(roles, *wf)
-	}
-	var out []pipeline.SynthRole
-	for _, n := range names {
-		out = append(out, pipeline.SynthRole{Name: n, Description: roles[n].Description})
-	}
-	return out
-}
-
-// pipelineSynthPalette derives the synthesis palette from the resolved config
-// and the root tool registry: the worker types declared across all workflows and
-// the currently-registered tool names. Both are advisory context the synthesizer
-// draws from (change 0026). The shared wiring (loopWiring.wirePipeline) uses
-// only its tool names: its worker list is unused there, and the synthesis seam
-// computes both the worker and role palettes per call (makePipelineSynthFn).
-func pipelineSynthPalette(cfg config.Config, reg *tools.Registry) (workers, toolNames []string) {
-	seen := map[string]bool{}
-	for _, wf := range cfg.Workflows {
-		for name := range wf.Workers {
-			if !seen[name] {
-				seen[name] = true
-				workers = append(workers, name)
-			}
-		}
-	}
-	sort.Strings(workers)
-	for _, s := range reg.Schemas() {
-		toolNames = append(toolNames, s.Name)
-	}
-	sort.Strings(toolNames)
-	return workers, toolNames
-}
-
-// pipelineStatusLine renders a terminal pipeline Status as a single human line.
-func pipelineStatusLine(name string, st pipeline.Status) string {
-	if st.State == pipeline.StateFailed {
-		return fmt.Sprintf("pipeline %s: failed at %s", name, st.FailedStep)
-	}
-	return fmt.Sprintf("pipeline %s: completed", name)
-}
-
-// wirePipelineTool registers the pipeline_run tool on reg, built from the
-// authored-run and synthesis seams. Like the blackboard tools it is ALWAYS wired
-// unless an explicit tools subset omits it: an empty requested list is a full
-// clone (include); a non-empty subset includes it only when it names it. This
-// mirrors wireChildBlackboard's include/exclude logic so a narrow child subset
-// consistently withholds shared-orchestration tools. Called at both the root and
-// every child builder of every agent entry point (change 0026).
-func wirePipelineTool(reg *tools.Registry, runFn tools.PipelineRunFunc, synthFn tools.PipelineSynthFunc, requested []string) {
-	wireBuiltPipelineTool(reg, tools.NewPipelineRunTool(runFn, synthFn), requested)
-}
-
-// wireBuiltPipelineTool applies wirePipelineTool's include rule to a built tool (change 0091).
-func wireBuiltPipelineTool(reg *tools.Registry, t *tools.PipelineRunTool, requested []string) {
-	if len(requested) == 0 || contains(requested, "pipeline_run") {
-		reg.Register(t)
-	} else {
-		reg.Unregister("pipeline_run")
-	}
-}
-
-// contains reports whether s contains v.
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // effectiveMaxTokens is the output cap a gateway-backed agent runs with: the
@@ -1090,7 +633,7 @@ func effectiveMaxTokens(mc model.ModelConfig, cfg config.Config) int {
 // returning the resolved gateway model id. instructions is the harness's task
 // brief, composed after the persona prompt and before extra. It is an explicit
 // parameter so every call site decides: root builds pass cfg.Instructions,
-// child builds pass "" (subagents and workers keep their own prompts).
+// child builds pass "" (subagents keep their own prompts).
 func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra, instructions string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.Approver, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
@@ -1105,7 +648,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	// agent that cannot spawn (see prompt_blocks.go), then advertise the
 	// auto-approved scratch directory (change 0068) on every binding's prompt.
 	//
-	// A tool-less agent (no_tools on the loop, or a tool-less role or worker
+	// A tool-less agent (no_tools on the loop, or a tool-less role
 	// child built from its tool-less config) is offered nothing. Every block
 	// extra can carry (skills listing, spawn guidance, scratch directory)
 	// describes a tool, so it is dropped, and the persona is its one-line

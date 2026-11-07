@@ -79,11 +79,6 @@ type Scheduler struct {
 	// the session total reaches this ceiling spawn_agent stays stripped globally.
 	// Guarded by mu.
 	sessionTokens int
-	// pools holds per-workflow pool policy keyed by the workflow root's node ID,
-	// registered when a workflow activates. The fair queue reads a pool's Concurrent
-	// figure to size its queue bound; the visibility predicate (Visible) consumes it
-	// too. Guarded by mu.
-	pools map[string]WorkflowPool
 }
 
 // slotWaiter is one blocked acquirer. ready is signalled (a single send) by the
@@ -107,7 +102,6 @@ func newScheduler(tree *AgentTree, maxConcurrent int) *Scheduler {
 		slotCap:    maxConcurrent,
 		poolQueues: map[string][]*slotWaiter{},
 		queueBound: defaultQueueBound,
-		pools:      map[string]WorkflowPool{},
 	}
 }
 
@@ -159,28 +153,6 @@ func (s *Scheduler) SpawnBudget() (used, max int) {
 	return used, max
 }
 
-// RegisterPool records a workflow pool policy for the subtree rooted at rootID,
-// to be consulted at admission and visibility time. Registered when a workflow
-// activates on a node. A zero WorkflowPool (every dimension unset) is a no-op
-// registration. Overwrites any prior policy for the same root.
-func (s *Scheduler) RegisterPool(rootID string, pool WorkflowPool) {
-	if rootID == "" {
-		return
-	}
-	s.mu.Lock()
-	s.pools[rootID] = pool
-	s.mu.Unlock()
-}
-
-// Pool returns the workflow pool policy registered for rootID, and whether one
-// was registered.
-func (s *Scheduler) Pool(rootID string) (WorkflowPool, bool) {
-	s.mu.Lock()
-	p, ok := s.pools[rootID]
-	s.mu.Unlock()
-	return p, ok
-}
-
 // sessionTokenCeiling returns the configured global session token ceiling (0 =
 // unset). Locks internally; safe under concurrent dispatch.
 func (s *Scheduler) sessionTokenCeiling() int {
@@ -193,8 +165,7 @@ func (s *Scheduler) sessionTokenCeiling() int {
 // TokenQuotaDenied reports the token-quota refusal for a spawn originating at
 // nodeID, or nil when no token quota is exhausted. It is the call-time backstop
 // mirror of the token terms in Visible (change 0036): the session ceiling (a
-// global whole-tree term) and the spawning node's workflow pool.tokens quota (a
-// subtree term). The session term is checked first. A non-nil result carries the
+// global whole-tree term). A non-nil result carries the
 // ErrTokenQuotaExhausted identity, mirroring the budget backstop's discipline.
 // Race-safe: it only calls tree/scheduler methods that lock.
 func (s *Scheduler) TokenQuotaDenied(nodeID string) error {
@@ -206,13 +177,6 @@ func (s *Scheduler) TokenQuotaDenied(nodeID string) error {
 			return fmt.Errorf("%w: session %d/%d tokens used — proceed with the results you already have and do not spawn again", ErrTokenQuotaExhausted, spent, ceil)
 		}
 	}
-	if poolID := s.tree.WorkflowRootOf(nodeID); poolID != "" {
-		if pool, ok := s.Pool(poolID); ok && pool.Tokens > 0 {
-			if spent := s.tree.SubtreeTokens(poolID); spent >= pool.Tokens {
-				return fmt.Errorf("%w: workflow %d/%d tokens used — proceed with the results you already have and do not spawn again", ErrTokenQuotaExhausted, spent, pool.Tokens)
-			}
-		}
-	}
 	return nil
 }
 
@@ -220,9 +184,8 @@ func (s *Scheduler) TokenQuotaDenied(nodeID string) error {
 // spawn result originating at nodeID once a hard token quota is exhausted in its
 // scope, or "" while every quota still has headroom (change 0036). It is the
 // scope-aware source for the spawn tool's QuotaFunc: the session ceiling (a
-// global term, so every node sees it once the whole-tree spend hits the ceiling)
-// and the node's workflow pool.tokens quota (a subtree term, so only nodes
-// inside the exhausted subtree see it). The returned string is pre-formatted
+// global term, so every node sees it once the whole-tree spend hits the ceiling).
+// The returned string is pre-formatted
 // (leading blank line, no trailing newline) to append directly, mirroring the
 // budget line. Absent before exhaustion, absent outside the exhausted scope.
 func (s *Scheduler) TokenQuotaWarning(nodeID string) string {
@@ -232,52 +195,32 @@ func (s *Scheduler) TokenQuotaWarning(nodeID string) string {
 	if ceil := s.sessionTokenCeiling(); ceil > 0 && s.tree.SessionTokens() >= ceil {
 		return "\n\ntoken quota exhausted: the session token ceiling is reached — conclude with the results you already have and do not spawn again"
 	}
-	if poolID := s.tree.WorkflowRootOf(nodeID); poolID != "" {
-		if pool, ok := s.Pool(poolID); ok && pool.Tokens > 0 && s.tree.SubtreeTokens(poolID) >= pool.Tokens {
-			return "\n\ntoken quota exhausted: this workflow's token quota is reached — conclude with the results you already have and do not spawn again"
-		}
-	}
 	return ""
 }
 
 // PoolSnapshot is a race-safe, point-in-time view of one pool's live counters
-// for observability (change 0036, Task 7). A pool is either a registered
-// workflow subtree (PoolID = the workflow root's node ID, Workflow = its name)
-// or the implicit session pool shared by all freeform spawns (PoolID "",
-// Workflow ""). SlotTotal and TokenQuota are 0 when that axis is unset for the
+// for observability (change 0036, Task 7). The only pool is the implicit session
+// pool shared by all spawns. SlotTotal and TokenQuota are 0 when that axis is unset for the
 // pool; the display layer omits an unset axis rather than rendering "0/0".
 type PoolSnapshot struct {
-	// PoolID is the workflow root's node ID, or "" for the implicit session pool.
-	PoolID string
-	// Workflow is the workflow name this pool roots (from the root node's
-	// WorkflowRoot label), or "" for the implicit session pool.
-	Workflow string
-	// SlotsInUse is the pool's live running+pending child count: the subtree
-	// running+pending for a workflow pool, or the whole-tree running+pending for
-	// the implicit session pool.
+	// SlotsInUse is the count of slots actually held against the cap.
 	SlotsInUse int
-	// SlotTotal is the pool's concurrent slot cap (WorkflowPool.Concurrent) for a
-	// workflow pool, or the global slot cap for the implicit session pool. 0 means
-	// no per-pool concurrent cap is configured (the workflow pool leans on the
-	// global cap); the display omits the slot axis when 0.
+	// SlotTotal is the global slot cap; the display omits the slot axis when 0.
 	SlotTotal int
 	// Queued is the number of spawn waiters parked in this pool's FIFO right now.
 	Queued int
-	// TokenSpend is the pool's live token sum: the subtree token sum for a
-	// workflow pool, or the whole-session token sum for the implicit session pool.
+	// TokenSpend is the whole-session token sum.
 	TokenSpend int
-	// TokenQuota is the pool's hard token ceiling (WorkflowPool.Tokens) for a
-	// workflow pool, or the session token ceiling for the implicit session pool.
-	// 0 means unset (no quota); the display omits the token axis when 0.
+	// TokenQuota is the session token ceiling. 0 means unset; the display omits the
+	// token axis when 0.
 	TokenQuota int
 }
 
 // SchedulerSnapshot is a race-safe, point-in-time view of the scheduler's global
 // and per-pool counters, taken for the observability surface (change 0036, Task
 // 7). It is a pure copy — no scheduler state is referenced after Snapshot returns
-// — so the display layer may read it without further locking. Every registered
-// workflow pool that is currently reachable in the tree appears in Pools; the
-// implicit session pool appears there too when it has any live slots, queued
+// — so the display layer may read it without further locking. The implicit session
+// pool appears in Pools when it has any live slots, queued
 // waiters, or token spend (so an idle freeform session renders nothing).
 type SchedulerSnapshot struct {
 	// SlotsInUse is the scheduler's own count of slots granted against the cap
@@ -299,9 +242,7 @@ type SchedulerSnapshot struct {
 	// global session token ceiling (0 = unset).
 	SessionTokens  int
 	SessionCeiling int
-	// Pools holds one entry per reachable workflow pool, plus the implicit session
-	// pool when it is non-idle. Order is stable within a call but not sorted; the
-	// display layer sorts if it needs deterministic ordering.
+	// Pools holds the implicit session pool when it is non-idle.
 	Pools []PoolSnapshot
 }
 
@@ -314,11 +255,7 @@ type SchedulerSnapshot struct {
 // authority (slotsInUse for the global slot figure — the tree's running+pending
 // counts yielded parents and can render an impossible ratio, N-2) and from the
 // existing accessors otherwise (SpawnBudget for the budget, SessionTokens for
-// token spend). Each
-// registered workflow pool contributes a PoolSnapshot scoped to its subtree
-// (SubtreeActiveCounts / SubtreeTokens), with its Workflow name derived from the
-// root node's WorkflowRoot label rather than duplicating the name into
-// registration. The implicit session pool is included only when it carries live
+// token spend). The implicit session pool is included only when it carries live
 // work (slots, queue, or spend) so an idle freeform session renders nothing.
 func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	if s == nil {
@@ -337,16 +274,6 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	slotsInUse := s.slotsInUse
 	sessionCeiling := s.sessionTokens
 	implicitQueued := len(s.poolQueues[""])
-	// Copy pool policy + queue depths under the lock, then release before touching
-	// the tree (whose accessors take their own locks) to keep lock ordering clean.
-	poolIDs := make([]string, 0, len(s.pools))
-	poolPolicy := make(map[string]WorkflowPool, len(s.pools))
-	poolQueued := make(map[string]int, len(s.pools))
-	for id, p := range s.pools {
-		poolIDs = append(poolIDs, id)
-		poolPolicy[id] = p
-		poolQueued[id] = len(s.poolQueues[id])
-	}
 	s.mu.Unlock()
 
 	sessionTokens := s.tree.SessionTokens()
@@ -361,24 +288,6 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 		SessionCeiling: sessionCeiling,
 	}
 
-	for _, id := range poolIDs {
-		pool := poolPolicy[id]
-		wf := ""
-		if node := s.tree.Node(id); node != nil {
-			wf = node.Snapshot().WorkflowRoot
-		}
-		sr, sp := s.tree.SubtreeActiveCounts(id)
-		snap.Pools = append(snap.Pools, PoolSnapshot{
-			PoolID:     id,
-			Workflow:   wf,
-			SlotsInUse: sr + sp,
-			SlotTotal:  pool.Concurrent,
-			Queued:     poolQueued[id],
-			TokenSpend: s.tree.SubtreeTokens(id),
-			TokenQuota: pool.Tokens,
-		})
-	}
-
 	// The implicit session pool: include it only when it has live work so an idle
 	// freeform session adds no noise. Its slots/tokens are the whole-session
 	// figures; its quota is the session ceiling. SlotsInUse is the scheduler's
@@ -387,8 +296,6 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	// it as both a slot user and a queued waiter (rendering e.g. "2/1 slots").
 	if running+pending > 0 || implicitQueued > 0 || sessionTokens > 0 {
 		snap.Pools = append(snap.Pools, PoolSnapshot{
-			PoolID:     "",
-			Workflow:   "",
 			SlotsInUse: slotsInUse,
 			SlotTotal:  slotCap,
 			Queued:     implicitQueued,
@@ -438,8 +345,7 @@ func (v Verdict) String() string {
 
 // AdmitRequest describes a would-be spawn for the admission decision. Depth is
 // the spawning agent's depth (the child would be created at Depth+1), matching
-// Spawner.depth. PoolID identifies the pool the spawn queues into — the workflow
-// root's node ID (WorkflowRootOf of the spawning node), or "" for the implicit
+// Spawner.depth. PoolID identifies the pool the spawn queues into: "" for the implicit
 // session pool shared by all freeform spawns.
 type AdmitRequest struct {
 	Depth  int
@@ -503,13 +409,8 @@ func (s *Scheduler) Admit(req AdmitRequest) (Verdict, error) {
 //     Granted or Queued ⇒ visible. Reaching the global active-cap does not strip —
 //     it queues (Queued is visible); the strip is the queue bound, returning as the
 //     queue drains.
-//   - Pool total (permanent), pool concurrent (reversible, subtree
-//     running+PENDING) and pool max_depth (static) come from the workflow pool
-//     registered for nodeID's nearest workflow root (WorkflowRootOf). These are
-//     scoped to that subtree only — a sibling subtree with its own headroom stays
-//     visible — and are unchanged from change 0034.
 //
-// The tighter of global and pool scope governs: any engaged term makes the node
+// Any engaged term makes the node
 // invisible. The read locks internally and MUST be recomputed every turn (never
 // cached). A nil scheduler, or a nil/absent node, is always visible. The
 // call-time backstops in Spawn remain the race safety net regardless.
@@ -521,11 +422,10 @@ func (s *Scheduler) Visible(nodeID string) bool {
 	if node == nil {
 		return true
 	}
-	poolID := s.tree.WorkflowRootOf(nodeID)
 
 	// Global scope: budget, slot cap, and the pool's queue bound, via Admit.
 	// Granted or Queued are the only visible verdicts (OverBound and Denied strip).
-	v, _ := s.Admit(AdmitRequest{Depth: node.Depth, PoolID: poolID})
+	v, _ := s.Admit(AdmitRequest{Depth: node.Depth})
 	if v != Granted && v != Queued {
 		return false
 	}
@@ -537,46 +437,13 @@ func (s *Scheduler) Visible(nodeID string) bool {
 		return false
 	}
 
-	// Pool scope (change 0034): total/concurrent/max_depth, scoped to the subtree
-	// rooted at poolID. Absent a registered pool (freeform spawn) none engage.
-	if poolID != "" {
-		if pool, ok := s.Pool(poolID); ok {
-			root := s.tree.Node(poolID)
-			rootDepth := 0
-			if root != nil {
-				rootDepth = root.Depth
-			}
-			// Static depth limit: at or beyond rootDepth+MaxDepth, never spawn.
-			if pool.MaxDepth > 0 && node.Depth >= rootDepth+pool.MaxDepth {
-				return false
-			}
-			// Total (permanent): the subtree's lifetime spawn quota.
-			if pool.Total > 0 && s.tree.SubtreeSpawnCount(poolID) >= pool.Total {
-				return false
-			}
-			// Tokens (permanent, change 0036): the subtree's lifetime token quota.
-			// Same shape as Total — the subtree token sum is append-only, so once
-			// it reaches the quota spawn_agent stays stripped in THIS subtree only;
-			// a sibling workflow subtree with its own headroom is unaffected.
-			if pool.Tokens > 0 && s.tree.SubtreeTokens(poolID) >= pool.Tokens {
-				return false
-			}
-			// Concurrent (reversible): subtree running+pending at the pool cap.
-			if pool.Concurrent > 0 {
-				running, pending := s.tree.SubtreeActiveCounts(poolID)
-				if running+pending >= pool.Concurrent {
-					return false
-				}
-			}
-		}
-	}
 	return true
 }
 
 // StripPredicate returns the per-turn spawn-strip predicate for nodeID: it strips
 // (returns true) exactly when nodeID is not Visible. It is the single
-// scheduler-backed strip rule for every scope (global budget/slot/queue-bound and
-// per-workflow-pool terms alike). The predicate recomputes on each call (it MUST
+// scheduler-backed strip rule for every scope (global budget/slot and
+// queue-bound terms alike). The predicate recomputes on each call (it MUST
 // NOT be cached across turns) and is race-safe. A nil scheduler yields a predicate
 // that never strips.
 func (s *Scheduler) StripPredicate(nodeID string) func() bool {
@@ -601,11 +468,6 @@ func (s *Scheduler) poolQueueBound(poolID string) int {
 func (s *Scheduler) poolQueueBoundLocked(poolID string) int {
 	mult := s.queueBound
 	slots := s.slotCap
-	if poolID != "" {
-		if p, ok := s.pools[poolID]; ok && p.Concurrent > 0 {
-			slots = p.Concurrent
-		}
-	}
 	if mult <= 0 || slots <= 0 {
 		return 0
 	}

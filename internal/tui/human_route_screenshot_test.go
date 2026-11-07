@@ -24,11 +24,9 @@ func screenshotShell(t *testing.T) (ShellModel, *agent.HumanBus, *agent.AgentTre
 	rev := agent.NewAgentNodeForTest("reviewer-1", tree.RootID(), "reviewer")
 	tree.AddNodeForTest(rev)
 	reg.Register("reviewer-1", "reviewer")
-	bb := agent.NewBlackboard(tree)
-	bb.Put("plan/api", "routes", "coder-1", "coder")
 
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
-	m = m.WithTree(tree).WithBlackboard(bb).WithHumanMessaging(bus(tree), reg, nil)
+	m = m.WithTree(tree).WithHumanMessaging(bus(tree), reg, nil)
 	return m, m.humanBus, tree
 }
 

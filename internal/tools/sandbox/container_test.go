@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // timeInPast is an already-elapsed deadline, so ctx.Err() reports
@@ -172,7 +170,7 @@ func TestContainerArgvMountsTrustedRootWhenWorkingDirUnset(t *testing.T) {
 	rec := &recordingRun{}
 	h := newTestHandler(t, DefaultConfig(), rec)
 
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -207,7 +205,7 @@ func TestContainerRefusesWorkingDirOutsideTrustedRoot(t *testing.T) {
 			h := newTestHandler(t, DefaultConfig(), rec)
 			target := pick(h.root)
 
-			r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+			r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 			out, err := r.Exec(context.Background(), "cat /workspace/.aws/credentials", target)
 
 			if err == nil {
@@ -242,7 +240,7 @@ func TestContainerWorkingDirSubpathMovesWorkdirNotMount(t *testing.T) {
 	for _, given := range []string{sub, filepath.Join("internal", "tools")} {
 		t.Run(given, func(t *testing.T) {
 			rec.name, rec.args = "", nil
-			r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+			r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 			if _, err := r.Exec(context.Background(), "true", given); err != nil {
 				t.Fatalf("Exec: %v", err)
 			}
@@ -264,7 +262,7 @@ func TestContainerRefusesWorkingDirThatIsNotADirectory(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 	out, err := r.Exec(context.Background(), "true", file)
 
 	if !errors.Is(err, ErrWorkingDirRefused) {
@@ -290,7 +288,7 @@ func TestContainerRefusesSymlinkedWorkingDirEscape(t *testing.T) {
 		t.Fatalf("Symlink: %v", err)
 	}
 
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 	out, err := r.Exec(context.Background(), "true", link)
 
 	if err == nil {
@@ -321,7 +319,7 @@ func TestContainerWithoutTrustedRootMountsNothingAndRefusesWorkingDir(t *testing
 		t.Fatalf("newContainerHandler: %v", err)
 	}
 
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -346,72 +344,6 @@ func TestContainerWithoutTrustedRootMountsNothingAndRefusesWorkingDir(t *testing
 	}
 }
 
-// LOCAL PARITY (change 0065). This golden is also the parity assertion for the
-// per-tenant mount root: newTestHandler configures NO tenantRootSource, which is
-// the local single-tenant deployment and the default everywhere else, and the
-// argv below is byte-for-byte the argv this test asserted before 0065 existed.
-//
-// The parity is spelled out rather than left implicit because its failure mode
-// is silent and severe in one direction: if a future change ever makes the
-// resolver path the default — by defaulting h.tenantRoots to a non-nil value, or
-// by letting the nil-interface trap wrap a nil *TenantRoots — every resolver-less
-// deployment would resolve to no root, mount nothing, and hand the model an empty
-// box that merely LOOKS like its workspace. The explicit check on h.tenantRoots
-// below names that regression at the point it would occur; the -v element makes
-// it visible in the argv too.
-func TestContainerExecArgvGolden(t *testing.T) {
-	rec := &recordingRun{}
-	cfg := DefaultConfig()
-	cfg.Image = "example.invalid/img:1.2.3"
-	h := newTestHandler(t, cfg, rec)
-
-	// The precondition the golden below encodes: no per-tenant resolver.
-	if h.tenantRoots != nil {
-		t.Fatalf("handler holds a tenant-root resolver (%#v) with none configured; "+
-			"the resolver-less path must remain the default", h.tenantRoots)
-	}
-
-	env := Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root", "LANG": "C"}}
-	r, err := h.Acquire(context.Background(), loopauth.Principal{}, env)
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-
-	// working_dir unset: the default case, and the one a model produces when it
-	// leaves the optional argument alone.
-	if _, err := r.Exec(context.Background(), "echo hi", ""); err != nil {
-		t.Fatalf("Exec: %v", err)
-	}
-
-	if rec.name != "docker" {
-		t.Fatalf("cli = %q, want docker", rec.name)
-	}
-	want := []string{
-		"run", "--rm", "-i",
-		// env keys sorted for determinism; ALWAYS the K=V pair form
-		"--env", "HOME=/root",
-		"--env", "LANG=C",
-		"--env", "PATH=/usr/bin",
-		// The mount source is the TRUSTED root the composition root declared,
-		// never anything the model said — and, with no resolver configured,
-		// it is the HANDLER's single root (h.root) unchanged, not a per-tenant
-		// child of it. That h.root, and not some resolver-derived path, is
-		// what appears here IS the 0065 local-parity guarantee.
-		"-v", h.root + ":/workspace",
-		"-w", "/workspace",
-		// --pull=never (change 0077): the image is acquired by the pre-pull, so
-		// run must never trigger one. With DefaultConfig (local posture, no caps)
-		// this is the ONLY 0077 addition — the uncontained baseline is otherwise
-		// byte-identical to the #0063 argv.
-		"--pull=never",
-		"example.invalid/img:1.2.3",
-		"/bin/sh", "-c", "echo hi",
-	}
-	if !reflect.DeepEqual(rec.args, want) {
-		t.Fatalf("argv mismatch\n got: %#v\nwant: %#v", rec.args, want)
-	}
-}
-
 func TestContainerExecNeverUsesBareEnvFlag(t *testing.T) {
 	// A bare `--env K` tells every one of docker/nerdctl/podman to copy the
 	// HOST's value of K into the container: exactly the ambient-inheritance
@@ -419,7 +351,7 @@ func TestContainerExecNeverUsesBareEnvFlag(t *testing.T) {
 	rec := &recordingRun{}
 	h := newTestHandler(t, DefaultConfig(), rec)
 
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{Allow: map[string]string{"PATH": "/usr/bin"}})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{Allow: map[string]string{"PATH": "/usr/bin"}})
 	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -451,7 +383,7 @@ func TestContainerExecNoHostVarLeaksIntoArgv(t *testing.T) {
 		}
 		return "", false
 	})
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, env)
+	r, _ := h.Acquire(context.Background(), Principal{}, env)
 	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
@@ -468,7 +400,7 @@ func TestContainerImageSelection(t *testing.T) {
 	t.Run("default when unset", func(t *testing.T) {
 		rec := &recordingRun{}
 		h := newTestHandler(t, DefaultConfig(), rec)
-		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+		r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 		if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
@@ -482,7 +414,7 @@ func TestContainerImageSelection(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Image = "ghcr.io/example/custom:v9"
 		h := newTestHandler(t, cfg, rec)
-		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+		r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 		if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
@@ -512,7 +444,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 	t.Run("non-zero exit is not an error", func(t *testing.T) {
 		rec := &recordingRun{out: []byte("nope\n"), code: 42}
 		h := newTestHandler(t, DefaultConfig(), rec)
-		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+		r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 
 		out, err := r.Exec(context.Background(), "exit 42", "")
 		if err != nil {
@@ -532,7 +464,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 	t.Run("substrate could not start the command", func(t *testing.T) {
 		rec := &recordingRun{code: 0, err: errors.New("cannot connect to the docker daemon")}
 		h := newTestHandler(t, DefaultConfig(), rec)
-		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+		r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 
 		out, err := r.Exec(context.Background(), "true", "")
 		if err == nil {
@@ -549,7 +481,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 
 		rec := &recordingRun{code: 137, err: nil}
 		h := newTestHandler(t, DefaultConfig(), rec)
-		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+		r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 
 		out, err := r.Exec(ctx, "sleep 100", "")
 		if err != nil {
@@ -567,7 +499,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 func TestContainerReleaseIsIdempotentNoOp(t *testing.T) {
 	rec := &recordingRun{}
 	h := newTestHandler(t, DefaultConfig(), rec)
-	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, _ := h.Acquire(context.Background(), Principal{}, Env{})
 
 	for i := 0; i < 3; i++ {
 		if err := r.Release(context.Background()); err != nil {
@@ -673,7 +605,7 @@ func egressHandler(t *testing.T, rec *recordingRun, e Egress, limits Limits) *co
 // pre-pull invocation is recorded separately on rec (see recordingRun).
 func egressRunArgv(t *testing.T, h *containerHandler, rec *recordingRun, env Env) []string {
 	t.Helper()
-	r, err := h.Acquire(context.Background(), loopauth.Principal{}, env)
+	r, err := h.Acquire(context.Background(), Principal{}, env)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -681,115 +613,6 @@ func egressRunArgv(t *testing.T, h *containerHandler, rec *recordingRun, env Env
 		t.Fatalf("Exec: %v", err)
 	}
 	return rec.args
-}
-
-// Under the default posture (EgressAllowAll — also the zero value, which is what
-// every pre-0064 call site produces) argv carries NO network flag at all. The
-// floor is opt-in; a handler that emitted it unconditionally would break every
-// operator who never configured egress, and this is the test that says so.
-func TestContainerArgvNoNetworkFlagUnderAllowAll(t *testing.T) {
-	for name, e := range map[string]Egress{
-		"zero value":         {},
-		"explicit allow-all": {Mode: EgressAllowAll},
-		// An allowlist without the enforcing mode is inert: the mode is the only
-		// thing that turns the floor on.
-		"allow-all with entries": {Mode: EgressAllowAll, Allow: []AllowEntry{{Host: "example.com", Port: 443}}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			rec := &recordingRun{}
-			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
-			if contains(argv, "--network") {
-				t.Fatalf("allow-all argv carries --network: %#v", argv)
-			}
-		})
-	}
-}
-
-// Under EgressEnforce the floor is present, as the `--network none` PAIR — not
-// `--network=none`, because the pair form is what all three detected CLIs share
-// and what the rest of this builder emits.
-func TestContainerArgvNetworkNoneUnderEnforce(t *testing.T) {
-	for name, e := range map[string]Egress{
-		// The deny-all state: enforcing with nothing declared. The floor is a
-		// property of the MODE, never of the allowlist being non-empty.
-		"enforce, empty allowlist": {Mode: EgressEnforce},
-		"enforce with entries":     {Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			rec := &recordingRun{}
-			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
-			if !containsPair(argv, "--network", "none") {
-				t.Fatalf("enforce argv missing the --network none pair: %#v", argv)
-			}
-		})
-	}
-}
-
-// The ordering guarantee, asserted as a WHOLE-ARGV golden: the floor lands after
-// the cgroup caps and before the --env pairs, and every neighbour the reconcile
-// named — the --env pairs, the mount, -w, and the trailing --pull=never — keeps
-// the position it had before 0064.
-func TestContainerArgvEnforceOrderingIsUnchangedAroundTheFloor(t *testing.T) {
-	rec := &recordingRun{}
-	h := egressHandler(t, rec, Egress{Mode: EgressEnforce}, Limits{
-		MemoryBytes: i64(2 << 30),
-		CPUs:        str("2.0"),
-	})
-	// 0065 local parity, on the fully-loaded argv as well as the bare one: the
-	// egress/limits handler configures no tenant-root resolver either, so the
-	// mount element below is still h.root. Asserted here too because this is the
-	// golden that pins ORDER — a resolver accidentally made default would change
-	// the mount's VALUE while leaving every position intact, and a value-blind
-	// ordering check would not notice.
-	if h.tenantRoots != nil {
-		t.Fatalf("handler holds a tenant-root resolver (%#v) with none configured", h.tenantRoots)
-	}
-
-	argv := egressRunArgv(t, h, rec, Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root"}})
-
-	want := []string{
-		"run", "--rm", "-i",
-		"--memory", "2147483648", "--memory-swap", "2147483648",
-		"--cpus", "2.0",
-		"--network", "none",
-		"--env", "HOME=/root",
-		"--env", "PATH=/usr/bin",
-		"-v", h.root + ":" + containerWorkspace,
-		"-w", containerWorkspace,
-		"--pull=never",
-		DefaultContainerImage, "/bin/sh", "-c", "true",
-	}
-	if !reflect.DeepEqual(argv, want) {
-		t.Fatalf("argv =\n%#v\nwant\n%#v", argv, want)
-	}
-}
-
-// THE floor must never reach the pre-pull. A `pull` under --network none cannot
-// reach a registry, so an image acquisition that inherited the floor would fail
-// every cold start with an opaque network error — and, with --pull=never on the
-// run argv, would take the whole substrate down with it.
-//
-// This asserts the structural reason as well as the symptom: prePull/runPull
-// build their own argv (`pull <image>`, straight to h.run) and never call
-// containerRunner.argv, so there is no builder for the floor to leak through.
-func TestContainerPrePullArgvCarriesNoNetworkFloor(t *testing.T) {
-	rec := &recordingRun{}
-	h := egressHandler(t, rec, Egress{Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}}, Limits{})
-
-	// Acquire alone performs the pre-pull; the run argv is asserted elsewhere.
-	if _, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{}); err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-
-	if rec.pulls != 1 {
-		t.Fatalf("pulls = %d, want exactly 1", rec.pulls)
-	}
-	if contains(rec.pullArgs, "--network") {
-		t.Fatalf("pre-pull argv carries the egress floor: %#v", rec.pullArgs)
-	}
-	if !reflect.DeepEqual(rec.pullArgs, []string{"pull", DefaultContainerImage}) {
-		t.Fatalf("pre-pull argv = %#v, want exactly [pull <image>] — it must not share the run builder", rec.pullArgs)
-	}
 }
 
 // withRogueEgress is a caller-supplied containerOption applied BEFORE the ones
@@ -827,5 +650,143 @@ func TestServiceAppliesTrustedEgressLastSoCallersCannotLowerTheFloor(t *testing.
 	}
 	if argv := egressRunArgv(t, h, rec, Env{}); !containsPair(argv, "--network", "none") {
 		t.Fatalf("argv missing the trusted --network none floor: %#v", argv)
+	}
+}
+
+// The argv of the local container handler, whole.
+func TestContainerExecArgvGolden(t *testing.T) {
+	rec := &recordingRun{}
+	cfg := DefaultConfig()
+	cfg.Image = "example.invalid/img:1.2.3"
+	h := newTestHandler(t, cfg, rec)
+
+	env := Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root", "LANG": "C"}}
+	r, err := h.Acquire(context.Background(), Principal{}, env)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	// working_dir unset: the default case, and the one a model produces when it
+	// leaves the optional argument alone.
+	if _, err := r.Exec(context.Background(), "echo hi", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if rec.name != "docker" {
+		t.Fatalf("cli = %q, want docker", rec.name)
+	}
+	want := []string{
+		"run", "--rm", "-i",
+		// env keys sorted for determinism; ALWAYS the K=V pair form
+		"--env", "HOME=/root",
+		"--env", "LANG=C",
+		"--env", "PATH=/usr/bin",
+		// The mount source is the TRUSTED root the composition root declared,
+		// never anything the model said.
+		"-v", h.root + ":/workspace",
+		"-w", "/workspace",
+		// --pull=never (change 0077): the image is acquired by the pre-pull, so
+		// run must never trigger one. With DefaultConfig (local posture, no caps)
+		// this is the ONLY 0077 addition — the uncontained baseline is otherwise
+		// byte-identical to the #0063 argv.
+		"--pull=never",
+		"example.invalid/img:1.2.3",
+		"/bin/sh", "-c", "echo hi",
+	}
+	if !reflect.DeepEqual(rec.args, want) {
+		t.Fatalf("argv mismatch\n got: %#v\nwant: %#v", rec.args, want)
+	}
+}
+
+// Under the default posture (EgressAllowAll — also the zero value, which is what
+// every pre-0064 call site produces) argv carries NO network flag at all. The
+// floor is opt-in; a handler that emitted it unconditionally would break every
+// operator who never configured egress, and this is the test that says so.
+func TestContainerArgvNoNetworkFlagUnderAllowAll(t *testing.T) {
+	for name, e := range map[string]Egress{
+		"zero value":         {},
+		"explicit allow-all": {Mode: EgressAllowAll},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingRun{}
+			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
+			if contains(argv, "--network") {
+				t.Fatalf("allow-all argv carries --network: %#v", argv)
+			}
+		})
+	}
+}
+
+// Under EgressEnforce the floor is present, as the `--network none` PAIR — not
+// `--network=none`, because the pair form is what all three detected CLIs share
+// and what the rest of this builder emits.
+func TestContainerArgvNetworkNoneUnderEnforce(t *testing.T) {
+	for name, e := range map[string]Egress{
+		"enforce": {Mode: EgressEnforce},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingRun{}
+			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
+			if !containsPair(argv, "--network", "none") {
+				t.Fatalf("enforce argv missing the --network none pair: %#v", argv)
+			}
+		})
+	}
+}
+
+// The ordering guarantee, asserted as a WHOLE-ARGV golden: the floor lands after
+// the cgroup caps and before the --env pairs, and every neighbour the reconcile
+// named — the --env pairs, the mount, -w, and the trailing --pull=never — keeps
+// the position it had before 0064.
+func TestContainerArgvEnforceOrderingIsUnchangedAroundTheFloor(t *testing.T) {
+	rec := &recordingRun{}
+	h := egressHandler(t, rec, Egress{Mode: EgressEnforce}, Limits{
+		MemoryBytes: i64(2 << 30),
+		CPUs:        str("2.0"),
+	})
+	argv := egressRunArgv(t, h, rec, Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root"}})
+
+	want := []string{
+		"run", "--rm", "-i",
+		"--memory", "2147483648", "--memory-swap", "2147483648",
+		"--cpus", "2.0",
+		"--network", "none",
+		"--env", "HOME=/root",
+		"--env", "PATH=/usr/bin",
+		"-v", h.root + ":" + containerWorkspace,
+		"-w", containerWorkspace,
+		"--pull=never",
+		DefaultContainerImage, "/bin/sh", "-c", "true",
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv =\n%#v\nwant\n%#v", argv, want)
+	}
+}
+
+// THE floor must never reach the pre-pull. A `pull` under --network none cannot
+// reach a registry, so an image acquisition that inherited the floor would fail
+// every cold start with an opaque network error — and, with --pull=never on the
+// run argv, would take the whole substrate down with it.
+//
+// This asserts the structural reason as well as the symptom: prePull/runPull
+// build their own argv (`pull <image>`, straight to h.run) and never call
+// containerRunner.argv, so there is no builder for the floor to leak through.
+func TestContainerPrePullArgvCarriesNoNetworkFloor(t *testing.T) {
+	rec := &recordingRun{}
+	h := egressHandler(t, rec, Egress{Mode: EgressEnforce}, Limits{})
+
+	// Acquire alone performs the pre-pull; the run argv is asserted elsewhere.
+	if _, err := h.Acquire(context.Background(), Principal{}, Env{}); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	if rec.pulls != 1 {
+		t.Fatalf("pulls = %d, want exactly 1", rec.pulls)
+	}
+	if contains(rec.pullArgs, "--network") {
+		t.Fatalf("pre-pull argv carries the egress floor: %#v", rec.pullArgs)
+	}
+	if !reflect.DeepEqual(rec.pullArgs, []string{"pull", DefaultContainerImage}) {
+		t.Fatalf("pre-pull argv = %#v, want exactly [pull <image>] — it must not share the run builder", rec.pullArgs)
 	}
 }

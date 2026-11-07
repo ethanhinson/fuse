@@ -135,8 +135,8 @@ func TestResearchProbeEntryPointObservesTheRootTurn(t *testing.T) {
 // TestSetupLocalObservabilityEmptyConfigIsNoop is the shared byte-identical
 // default guard for the non-shell entry points.
 func TestSetupLocalObservabilityEmptyConfigIsNoop(t *testing.T) {
-	var out, errb bytes.Buffer
-	obs, _, code, ok := setupLocalObservability(context.Background(), config.Config{}, &out, &errb, "one-shot")
+	var errb bytes.Buffer
+	obs, _, code, ok := setupLocalObservability(context.Background(), config.Config{}, &errb, "one-shot")
 	if !ok {
 		t.Fatalf("setup failed with code %d: %s", code, errb.String())
 	}
@@ -144,67 +144,18 @@ func TestSetupLocalObservabilityEmptyConfigIsNoop(t *testing.T) {
 	if _, isNoop := obs.observer.(observe.NoopObserver); !isNoop {
 		t.Fatalf("empty config must yield NoopObserver, got %T", obs.observer)
 	}
-	if obs.metricsListener != nil || obs.metricsServer != nil {
-		t.Fatal("empty config must open no metrics listener")
+	if errb.Len() != 0 {
+		t.Fatalf("empty config must produce no output; stderr=%q", errb.String())
 	}
-	if out.Len() != 0 || errb.Len() != 0 {
-		t.Fatalf("empty config must produce no output; stdout=%q stderr=%q", out.String(), errb.String())
-	}
-}
-
-// TestSetupLocalObservabilitySkipsAuthenticatedMetrics guards against binding an
-// unserviceable listener: local entry points pass a nil verifier, so
-// access: authenticated would 401 every scrape forever. The endpoint must be
-// skipped with a warning instead, while access: public still serves /metrics.
-func TestSetupLocalObservabilitySkipsAuthenticatedMetrics(t *testing.T) {
-	t.Run("authenticated opens no listener and warns", func(t *testing.T) {
-		cfg := enabledMetricsShellConfig("127.0.0.1:0")
-		cfg.Observability.Metrics.Access = "authenticated"
-
-		var out, errb bytes.Buffer
-		obs, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
-		if !ok {
-			t.Fatalf("authenticated metrics must not fail startup: code=%d stderr=%s", code, errb.String())
-		}
-		t.Cleanup(func() { _ = obs.Close(context.Background()) })
-		if obs.metricsListener != nil || obs.metricsServer != nil {
-			t.Fatal("authenticated metrics with a nil verifier must open no listener")
-		}
-		if !strings.Contains(errb.String(), "one-shot: metrics endpoint disabled") ||
-			!strings.Contains(errb.String(), "access: public") {
-			t.Fatalf("expected a labeled skip warning on stderr, got %q", errb.String())
-		}
-	})
-
-	t.Run("public still serves /metrics", func(t *testing.T) {
-		var out, errb bytes.Buffer
-		obs, _, code, ok := setupLocalObservability(context.Background(), enabledMetricsShellConfig("127.0.0.1:0"), &out, &errb, "one-shot")
-		if !ok {
-			t.Fatalf("setup failed with code %d: %s", code, errb.String())
-		}
-		t.Cleanup(func() { _ = obs.Close(context.Background()) })
-		if obs.metricsListener == nil {
-			t.Fatal("public metrics must open a listener")
-		}
-		resp, err := http.Get("http://" + obs.metricsListener.Addr().String() + "/metrics")
-		if err != nil {
-			t.Fatalf("scrape: %v", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("public /metrics scrape status=%d, want 200", resp.StatusCode)
-		}
-	})
 }
 
 // TestSetupLocalObservabilityFailsFastOnInvalidConfig covers settled decision 2
 // for the non-shell entry points, including the label they identify with.
 func TestSetupLocalObservabilityFailsFastOnInvalidConfig(t *testing.T) {
-	cfg := enabledMetricsShellConfig("")
-	cfg.Observability.Metrics.Path = "not-absolute"
+	cfg := invalidTracesConfig()
 
-	var out, errb bytes.Buffer
-	_, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
+	var errb bytes.Buffer
+	_, _, code, ok := setupLocalObservability(context.Background(), cfg, &errb, "one-shot")
 	if ok || code == 0 {
 		t.Fatal("invalid observability config must abort startup with a non-zero code")
 	}

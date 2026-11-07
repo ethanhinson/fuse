@@ -42,27 +42,16 @@ func scriptedBashCall(command string) string {
 
 const scriptedFinal = `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`
 
-// runScriptedLoop starts one loop on rt, drains Observe, waits, and returns
-// the permission.decision payloads from the durable history only (the live
-// tail can overlap it, so folding both would double-count).
+// runScriptedLoop starts one loop on rt, waits, and returns the permission.decision
+// payloads from its event log.
 func runScriptedLoop(t *testing.T, rt runtime.Runtime) []event.PermissionDecisionPayload {
 	t.Helper()
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer cancel()
-	for range ch {
-	}
 	_, _ = h.Wait()
-	hist, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
-	if err != nil {
-		t.Fatalf("Attach: %v", err)
-	}
+	hist := loopHistory(t, h.ID())
 	var out []event.PermissionDecisionPayload
 	for _, ev := range hist {
 		if ev.Kind != event.KindPermissionDecision {
@@ -151,7 +140,7 @@ func TestLoopServerDeniesWrapperRuleEndToEnd(t *testing.T) {
 	t.Run("auto deny", func(t *testing.T) {
 		floorWorkspace(t)
 
-		rt, gw, _ := harnessServer(t, harnessOperator+`
+		rt, gw := harnessServer(t, harnessOperator+`
 permissions:
   mode: auto
   auto:
@@ -187,7 +176,7 @@ permissions:
 
 		// "bash:timeout *" (with a space) misses smart mode's legacy
 		// "bash:timeout" head, so only the raw pre-peel subject reaches it.
-		rt, gw, _ := harnessServer(t, harnessOperator+`
+		rt, gw := harnessServer(t, harnessOperator+`
 permissions:
   always_prompt: ["bash:timeout *"]
 `)
@@ -227,7 +216,7 @@ permissions:
 func TestLoopServerDeniesCatastrophicInSmartModeEndToEnd(t *testing.T) {
 	floorWorkspace(t)
 
-	rt, gw, _ := harnessServer(t, harnessOperator+`
+	rt, gw := harnessServer(t, harnessOperator+`
 permissions:
   auto_approve: ["bash:rm"]
 `)

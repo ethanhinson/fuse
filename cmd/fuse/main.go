@@ -24,7 +24,7 @@ func main() {
 
 // run is the testable entry point. It returns a process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
-	// `version` and `healthcheck` are answered BEFORE config.Load() on purpose. The dispatch switch
+	// `version` is answered BEFORE config.Load() on purpose. The dispatch switch
 	// below sits under config.Load() + Validate() + validateModelRefs, so a user
 	// with a broken ~/.fuse/config.yml — exactly the user about to file a bug
 	// report, and exactly the state of a fresh install — would get
@@ -35,14 +35,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		case "version", "--version", "-version":
 			fmt.Fprintf(stdout, "fuse %s\n", version.Version)
 			fmt.Fprintf(stdout, "go %s %s/%s\n", goruntime.Version(), goruntime.GOOS, goruntime.GOARCH)
-			fmt.Fprintf(stdout, "backends: %s\n", durableBackends)
 			return 0
-		case "healthcheck":
-			// A container healthcheck must be able to answer about a server whose
-			// config is broken — that is precisely when you most want to learn the
-			// container is unhealthy. It reads no config of its own: everything it
-			// needs is a flag with a default matching the server's own.
-			return runHealthcheck(args[1:], stderr)
+		// Without this, a script still calling a removed subcommand would run its
+		// name as a task and spend model tokens.
+		case "loop-serve-net", "loop-server", "healthcheck", "steer", "orchestrate":
+			fmt.Fprintf(stderr, "fuse %s was removed: fuse no longer runs as a server\n", args[0])
+			return 2
 		}
 	}
 
@@ -86,14 +84,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
 			return runMCPServer(args[1:], cfg, stdout, stderr)
-		case "loop-server":
-			return runLoopServer(args[1:], cfg, reg, stdout, stderr)
-		case "loop-serve-net":
-			return runLoopServeNet(args[1:], cfg, reg, stdout, stderr)
-		case "steer":
-			return runSteer(args[1:], stdout, stderr)
-		case "orchestrate":
-			return runOrchestrate(args[1:], cfg, reg, os.Stdin, stdout, stderr)
 		case "help":
 			banner.Print(stdout, version.Version)
 			fmt.Fprintln(stdout, "commands:")
@@ -102,11 +92,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse shell        start an interactive agent shell")
 			fmt.Fprintln(stdout, "  fuse research-probe \"<q>\"  run + observe the research flow headlessly")
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
-			fmt.Fprintln(stdout, "  fuse loop-server  headless stdio JSON-RPC loop-control server (binding #2)")
-			fmt.Fprintln(stdout, "  fuse loop-serve-net  networked Connect/protobuf (fuse.loop.v1) loop-control server (binding #3; bearer-token auth)")
-			fmt.Fprintln(stdout, "  fuse healthcheck  probe a running server's /readyz; exit 0 when healthy (container healthcheck)")
-			fmt.Fprintln(stdout, "  fuse steer        send a message to a running loop (--socket or --url, --loop; --interrupt to cut in)")
-			fmt.Fprintln(stdout, "  fuse orchestrate  chat with an orchestrator that watches and steers a running loop")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
 		}
@@ -117,7 +102,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	modelAlias := fs.String("model", "", "model alias to run (default: config default)")
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
-	controlSocket := fs.String("control", "", "serve a control socket at this path so the run can be steered (fuse steer / fuse orchestrate --socket PATH)")
 	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run, also for a cli/ model's tool subprocess - a deliberate footgun)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -125,7 +109,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rest := fs.Args()
 	if len(rest) == 0 {
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--control SOCKET] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
@@ -194,11 +178,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE here, before any
-	// model has run, against this process's working directory. hosted=false — a
-	// one-shot run executes the operator's OWN work on the operator's machine, so
-	// their file-only off-switch applies.
-	sb, closeEgress := newSandboxService(cfg, false, stderr)
-	defer closeEgress()
+	// model has run, against this process's working directory.
+	sb := newSandboxService(stderr)
 	// A tool-less run (no_tools, change 0116) starts from an empty registry.
 	toolReg := loopBaseRegistry(cfg, func() *tools.Registry {
 		return defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
@@ -218,23 +199,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rateGate := sessionRateGate(cfg)
 
 	// Binding #1a (change 0045): the one-shot path now drives the engine through the
-	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler/blackboard,
+	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler,
 	// spawn factory, and tool wiring exactly as before (behavior-preserving
 	// relocation); the renderer/gate stay in cmd/fuse via BuildAgent's closure.
 	// Session observability (change 0061): built ONCE here and threaded into every
 	// agent the one-shot run builds — root and children alike. The deferred shutdown
 	// is registered BEFORE the StartLoop / h.Wait error returns below so a short-lived
 	// one-shot run tears the exporters down on every path out of run().
-	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "one-shot")
+	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stderr, "one-shot")
 	if !obsOK {
 		return obsCode
 	}
 	defer closeObs()
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
-	// A control socket needs the run's event stream to be observable; without one the
-	// run keeps its no-op store and writes nothing.
-	deps.InMemoryEvents = *controlSocket != ""
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {
@@ -244,18 +222,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		oneShotMCPClose()
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
-	}
-	if *controlSocket != "" {
-		// The loop is running; open the way in. A failure here must not kill a run
-		// that is already doing the person's work, so it only warns.
-		ctlCtx, ctlCancel := context.WithCancel(context.Background())
-		defer ctlCancel()
-		if stopCtl, cerr := serveControlSocket(ctlCtx, *controlSocket, rt); cerr != nil {
-			fmt.Fprintf(stderr, "%v (continuing without a control socket)\n", cerr)
-		} else {
-			defer stopCtl()
-			fmt.Fprintf(stderr, "control: steer this run with: fuse steer --socket %s --loop %s \"message\"\n", *controlSocket, h.ID())
-		}
 	}
 	if _, err := h.Wait(); err != nil {
 		fmt.Fprintf(stderr, "run error: %v\n", err)

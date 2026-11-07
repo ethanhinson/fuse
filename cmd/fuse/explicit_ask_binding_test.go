@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/permissions"
@@ -72,7 +71,7 @@ func TestLoopServerDeniesExplicitAskRuleEndToEnd(t *testing.T) {
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
 	final := `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`
 
-	rt, gw, _ := harnessServer(t, harnessOperator+`
+	rt, gw := harnessServer(t, harnessOperator+`
 permissions:
   mode: auto
   auto:
@@ -84,23 +83,9 @@ permissions:
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer cancel()
-	var evs []event.Event
-	for ev := range ch {
-		evs = append(evs, ev)
-	}
 	_, _ = h.Wait()
-	// The live tail does not replay pre-subscribe events; the durable history is
-	// authoritative, so fold it in.
-	hist, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
-	if err != nil {
-		t.Fatalf("Attach: %v", err)
-	}
-	evs = append(evs, hist...)
+	hist := loopHistory(t, h.ID())
+	evs := hist
 
 	var found bool
 	for _, ev := range evs {
@@ -180,7 +165,7 @@ func TestLoopServerDeniesAlwaysPromptEndToEnd(t *testing.T) {
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
 	final := `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`
 
-	rt, gw, _ := harnessServer(t, harnessOperator+`
+	rt, gw := harnessServer(t, harnessOperator+`
 permissions:
   always_prompt: ["bash:touch*"]
 `)
@@ -190,20 +175,8 @@ permissions:
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer cancel()
-	for range ch {
-	}
 	_, _ = h.Wait()
-	// Count over the durable history only: the live tail can overlap it, so
-	// folding both in would double-count.
-	hist, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
-	if err != nil {
-		t.Fatalf("Attach: %v", err)
-	}
+	hist := loopHistory(t, h.ID())
 
 	var denies []event.PermissionDecisionPayload
 	for _, ev := range hist {
@@ -273,24 +246,18 @@ func TestLoopServerChildGateIsPolicyEndToEnd(t *testing.T) {
 		return textReply("unscripted")
 	}}
 	raw := &rawCapture{next: gw}
-	deps, host := harnessServerWith(t, hostedOperatorYAML+"permissions:\n  mode: auto\n  auto:\n    ask: [\"bash:touch*\"]\n", raw)
-	capture := &treeCapture{inner: host}
-	deps.Harness = capture
+	deps := harnessServerWith(t, hostedOperatorYAML+"permissions:\n  mode: auto\n  auto:\n    ask: [\"bash:touch*\"]\n", raw)
+	capture := &treeCapture{}
+	capture.wrap(&deps)
 	rt := runtime.New(deps)
 
 	ctx := context.Background()
-	// An empty spec routes the loop through the production harness resolver
-	// (so treeCapture sees its tree) without changing any operator setting.
-	h, err := rt.StartLoop(ctx, runtime.LoopConfig{Task: "ROOT-TASK", Harness: &harnessv1.HarnessSpec{}})
+	h, err := rt.StartLoop(ctx, runtime.LoopConfig{Task: "ROOT-TASK"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
 	_, _ = h.Wait()
-	// Durable history only: folding in a live tail can double-count.
-	hist, err := rt.Attach(ctx, event.DefaultTenant, h.ID(), 0)
-	if err != nil {
-		t.Fatalf("Attach: %v", err)
-	}
+	hist := loopHistory(t, h.ID())
 	tree := capture.last()
 	if tree == nil {
 		t.Fatal("the loop's BuildAgent never ran")

@@ -10,7 +10,7 @@ import (
 
 // SpawnRequest carries the model-supplied spawn arguments across the tools→agent
 // seam. A struct (rather than a positional list) keeps the seam stable as new
-// spawn options are added — change 0034 added Worker without touching every
+// spawn options are added without touching every
 // call site's argument order.
 type SpawnRequest struct {
 	Label        string
@@ -18,13 +18,6 @@ type SpawnRequest struct {
 	SystemPrompt string
 	Model        string
 	Tools        []string
-	// Worker names a workflow worker type (change 0034). Empty for freeform
-	// spawns and outside a workflow. When set, the child's registry is built
-	// from that worker's allowlist (the Tools subset may only narrow it).
-	Worker string
-	// Workflow names a configured workflow the child becomes the root of
-	// (change 0091). Empty for an ordinary spawn.
-	Workflow string
 	// Role names a top-level role (change 0114). Empty for an ordinary spawn.
 	Role string
 	// Expects, when non-nil, is a JSON Schema (a decoded object) describing the
@@ -32,7 +25,7 @@ type SpawnRequest struct {
 	// injects it into the child's system prompt and validates the child's output
 	// against it. Nil ⇒ no schema requested (prose result). As of change 0042 (D7)
 	// the freeform spawn_agent tool never populates this — it is prose-only for the
-	// model. Only the pipeline/code path sets it (via agent.SpawnOpts.Expects).
+	// model. Only Go callers set it (via agent.SpawnOpts.Expects).
 	Expects any
 }
 
@@ -45,7 +38,7 @@ type RoleOption struct {
 
 // SpawnResult is the tools-visible completion of a spawned child agent: the prose
 // result text and the run error. It deliberately omits the structured-delegation
-// value — only Go callers (the pipeline engine, and change 3's Runtime) consume
+// value — only Go callers consume
 // that, via *agent.AgentHandle directly. The tool needs only the text to build the
 // model-facing result (change 0044).
 type SpawnResult struct {
@@ -70,7 +63,7 @@ type SpawnHandle interface {
 // SpawnFunc is injected into SpawnAgentTool to break the import cycle between the
 // tools registry and the agent package. As of change 0044 it is handle-returning:
 // it starts a spawn and returns a SpawnHandle the caller awaits (the tool awaits it
-// internally; the pipeline/Runtime awaits it as the async seam). The wiring code in
+// internally). The wiring code in
 // cmd/fuse adapts agent.Spawner.Spawn — which already returns agent.AgentHandle — to
 // this seam. A non-nil error means the spawn was refused before it started
 // (depth/budget/quota); a nil-error handle always completes via WaitResult().
@@ -86,9 +79,7 @@ type BudgetFunc func() (used, max int)
 // successful spawn result, or "" when no hard token quota is exhausted in the
 // tool's scope (change 0036). The runtime supplies it computed fresh at result
 // time and pre-formatted (leading blank line, no trailing newline), mirroring
-// budgetLine. Scope lives in the wiring: a workflow child's QuotaFunc reports its
-// subtree quota, a session-scoped one reports the global ceiling, so the warning
-// appears only where the exhausted quota governs. Nil = no warning ever.
+// budgetLine. Nil = no warning ever.
 type QuotaFunc func() string
 
 // SpawnAgentTool is the spawn_agent built-in tool, allowing LLMs to spawn
@@ -101,13 +92,6 @@ type SpawnAgentTool struct {
 	// quota is exhausted in this tool's scope, so the agent concludes with what it
 	// has. Returns "" until exhausted; nil means no warning is ever emitted.
 	quota QuotaFunc
-	// workers, when non-empty, enumerates the workflow's worker names in the
-	// `worker` param schema so the model picks a typed worker instead of
-	// hand-assembling a toolset (change 0034). Empty outside a workflow subtree.
-	workers []string
-	// workflows, when non-empty, enumerates the configured workflow names in the
-	// `workflow` param schema (change 0091). Empty inside a workflow subtree.
-	workflows []string
 	// roles, when non-empty, enumerates the offered roles in the `role` param
 	// schema, one description line each (change 0114). Sorted by name.
 	roles []RoleOption
@@ -126,25 +110,6 @@ func NewSpawnAgentTool(spawn SpawnFunc) *SpawnAgentTool {
 // point where it chooses whether to spawn again.
 func NewSpawnAgentToolWithBudget(spawn SpawnFunc, budget BudgetFunc) *SpawnAgentTool {
 	return &SpawnAgentTool{spawn: spawn, budget: budget}
-}
-
-// WithWorkers returns a copy of the tool that advertises the given worker names
-// in its `worker` param enum (change 0034). Used inside a workflow subtree so
-// the model selects a typed worker. An empty/nil list leaves the param absent.
-func (t *SpawnAgentTool) WithWorkers(names []string) *SpawnAgentTool {
-	cp := *t
-	cp.workers = append([]string(nil), names...)
-	return &cp
-}
-
-// WithWorkflows returns a copy of the tool that advertises the given workflow
-// names (sorted) in its `workflow` param enum and description (change 0091).
-// An empty/nil list leaves the param absent.
-func (t *SpawnAgentTool) WithWorkflows(names []string) *SpawnAgentTool {
-	cp := *t
-	cp.workflows = append([]string(nil), names...)
-	sort.Strings(cp.workflows)
-	return &cp
 }
 
 // WithRoles returns a copy of the tool that advertises the given roles in its
@@ -184,14 +149,8 @@ func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
 // Description returns the tool description shown to the model.
 func (t *SpawnAgentTool) Description() string {
-	base := "Spawn a child agent to execute a subtask concurrently. " +
+	return "Spawn a child agent to execute a subtask concurrently. " +
 		"The child runs to completion and returns its findings as prose."
-	if len(t.workflows) > 0 {
-		base += " Pass `workflow` to run the child as the root of a configured workflow (" +
-			strings.Join(t.workflows, ", ") +
-			"); its subtree is then governed by that workflow's pool and typed workers."
-	}
-	return base
 }
 
 // Parameters returns the JSON schema for the tool input.
@@ -210,50 +169,14 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			"description": "Optional system prompt override; fully replaces the inherited one.",
 		},
 		"tools": map[string]any{
-			"type":  "array",
-			"items": map[string]any{"type": "string"},
-			"description": "Optional subset of parent tools to give the child. " +
-				"IMPORTANT: a non-empty subset that omits the blackboard_* tools " +
-				"WITHHOLDS shared-memory access from the child — it then cannot read " +
-				"or write the shared blackboard. If you are spawning children to " +
-				"collaborate through the blackboard (debate, ensemble, producer/" +
-				"consumer), either omit this field (the child inherits all tools) or " +
-				"include the blackboard_* tools you need (e.g. blackboard_write, " +
-				"blackboard_read, blackboard_keys) in the subset.",
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "Optional subset of parent tools to give the child. Omit it to inherit all of them.",
 		},
 		"model": map[string]any{
 			"type":        "string",
 			"description": "Optional model ID (defaults to the parent's model).",
 		},
-	}
-	// Inside a workflow subtree, offer a typed `worker` param enumerating the
-	// workflow's worker names; the child's registry is then the worker's
-	// allowlist exactly (tools may only narrow it). Change 0034.
-	if len(t.workers) > 0 {
-		enum := make([]any, len(t.workers))
-		for i, w := range t.workers {
-			enum[i] = w
-		}
-		props["worker"] = map[string]any{
-			"type":        "string",
-			"enum":        enum,
-			"description": "Workflow worker type for the child. Its allowlist is the child's whole tool set (plus the blackboard tools); a worker whose allowlist omits spawn_agent cannot itself spawn.",
-		}
-	}
-	// Outside a workflow subtree, offer a `workflow` param enumerating the
-	// configured workflows the child may root (change 0091).
-	if len(t.workflows) > 0 {
-		enum := make([]any, len(t.workflows))
-		for i, w := range t.workflows {
-			enum[i] = w
-		}
-		props["workflow"] = map[string]any{
-			"type": "string",
-			"enum": enum,
-			"description": "Optional workflow the child becomes the root of: " +
-				strings.Join(t.workflows, ", ") +
-				". Its pool limits and typed workers then govern the child's subtree. Not allowed inside a workflow.",
-		}
 	}
 	// Offer a `role` param enumerating the roles available here, one
 	// description line per role (change 0114).
@@ -264,16 +187,12 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			enum[i] = r.Name
 			lines.WriteString("\n- " + r.Name + " — " + r.Description)
 		}
-		note := ""
-		if len(t.workflows) > 0 {
-			note = " With `workflow`, the role must be one that workflow offers."
-		}
 		props["role"] = map[string]any{
 			"type": "string",
 			"enum": enum,
 			"description": "Optional named role for the child. The role supplies the child's system prompt, " +
 				"and its tool set and model when it defines them (tools may only narrow a role's tool set; " +
-				"model overrides its model). Do not pass system_prompt or worker with a role." + note + " Roles:" +
+				"model overrides its model). Do not pass system_prompt with a role. Roles:" +
 				lines.String(),
 		}
 	}
@@ -290,8 +209,6 @@ type spawnAgentInput struct {
 	SystemPrompt string   `json:"system_prompt"`
 	Tools        []string `json:"tools"`
 	Model        string   `json:"model"`
-	Worker       string   `json:"worker"`
-	Workflow     string   `json:"workflow"`
 	Role         string   `json:"role"`
 }
 
@@ -311,19 +228,17 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		SystemPrompt: input.SystemPrompt,
 		Model:        input.Model,
 		Tools:        input.Tools,
-		Worker:       input.Worker,
-		Workflow:     input.Workflow,
 		Role:         input.Role,
 	}
 	// Freeform model-driven spawns are prose-only: the tool no longer accepts an
 	// `expects` schema, so req.Expects stays zero here and any `expects` key in the
-	// raw args is ignored (change 0042, D7). The pipeline/code path still sets
-	// SpawnOpts.Expects directly for structured delegation — that seam is untouched.
+	// raw args is ignored (change 0042, D7). A Go caller may still set
+	// SpawnOpts.Expects directly for structured delegation.
 	//
 	// Change 0044: SpawnFunc is now handle-returning. The tool blocks INTERNALLY on
 	// handle.WaitResult() and returns the same result string (prose + budget line +
 	// quota line) to the model — the model-facing contract is byte-unchanged. The
-	// async handle is exposed only to the Go caller of SpawnFunc (pipeline/Runtime);
+	// async handle is exposed only to the Go caller of SpawnFunc;
 	// the model never sees it. A spawn refused before it started (depth/budget/quota)
 	// surfaces the error verbatim exactly as before.
 	handle, err := t.spawn(ctx, req)
@@ -368,37 +283,6 @@ func (t *SpawnAgentTool) budgetLine() string {
 		remaining = 0
 	}
 	return fmt.Sprintf("\n\nagent budget: %d/%d used (%d remaining)", used, max, remaining)
-}
-
-// TighterBudget composes two BudgetFuncs into one that, at call time, reports
-// whichever has FEWER remaining (max-used) — the binding constraint (change
-// 0034 Acceptance 5). A workflow child reads the tighter of its workflow-total
-// and the tree-global budget, so the injected budget line always shows the wall
-// it will actually hit first. An operand whose max <= 0 is unset and ignored; if
-// both are unset the result is unset (0,0) and budgetLine emits nothing.
-func TighterBudget(a, b BudgetFunc) BudgetFunc {
-	return func() (used, max int) {
-		type cand struct{ used, max int }
-		best := cand{}
-		bestSet := false
-		consider := func(f BudgetFunc) {
-			if f == nil {
-				return
-			}
-			u, m := f()
-			if m <= 0 {
-				return // unset
-			}
-			rem := m - u
-			if !bestSet || rem < best.max-best.used {
-				best = cand{u, m}
-				bestSet = true
-			}
-		}
-		consider(a)
-		consider(b)
-		return best.used, best.max
-	}
 }
 
 var _ Tool = (*SpawnAgentTool)(nil)

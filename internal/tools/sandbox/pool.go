@@ -5,8 +5,6 @@ import (
 	"errors"
 	"sync"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // Errors returned by a Pool. They are sentinels so callers branch on identity
@@ -87,7 +85,7 @@ const (
 // stays payload-free: bounded enums and bounded ids only, never the command,
 // never environment values, never output.
 type AcquireInfo struct {
-	Principal   loopauth.Principal
+	Principal   Principal
 	Handler     string        // bounded: "container" | "host"
 	Runtime     string        // bounded: "docker" | "nerdctl" | "podman" | ""
 	ContainerID string        // bounded id; empty when the substrate has none
@@ -98,7 +96,7 @@ type AcquireInfo struct {
 // ReleaseInfo describes one Runner ceasing to be held, whether the holder
 // handed it back or the pool took it away.
 type ReleaseInfo struct {
-	Principal   loopauth.Principal
+	Principal   Principal
 	Handler     string
 	Runtime     string
 	ContainerID string
@@ -133,7 +131,7 @@ type PoolHooks struct {
 type PoolSource interface {
 	// Acquire obtains a fresh execution context for p, with the environment
 	// resolved at the moment of the call.
-	Acquire(ctx context.Context, p loopauth.Principal) (Runner, error)
+	Acquire(ctx context.Context, p Principal) (Runner, error)
 	// HandlerName is the bounded substrate identifier.
 	HandlerName() string
 	// Runtime is the bounded container CLI name, or "".
@@ -179,7 +177,7 @@ type EnvResetter interface {
 // it additionally ask the RUNNER whether it agrees. A Runner that cannot answer
 // is not penalised — the recorded re-assertion still ran.
 type principalScoped interface {
-	acquiredFor() loopauth.Principal
+	acquiredFor() Principal
 }
 
 // mountScoped is implemented by Runners that can report the HOST directory
@@ -212,7 +210,7 @@ type containerIdentified interface {
 // it. The principal is recorded on the ENTRY, independently of the map key it
 // is filed under, precisely so the two can be compared.
 type poolEntry struct {
-	principal   loopauth.Principal
+	principal   Principal
 	runner      Runner
 	handler     string
 	runtime     string
@@ -294,7 +292,7 @@ type Pool struct {
 	now      func() time.Time
 
 	mu      sync.Mutex
-	entries map[loopauth.Principal]*poolEntry
+	entries map[Principal]*poolEntry
 	live    map[*poolEntry]struct{}
 	closed  bool
 
@@ -360,7 +358,7 @@ func NewPool(src PoolSource, opts ...PoolOption) *Pool {
 		src:     src,
 		gate:    src.gateFor(),
 		now:     time.Now,
-		entries: make(map[loopauth.Principal]*poolEntry),
+		entries: make(map[Principal]*poolEntry),
 		live:    make(map[*poolEntry]struct{}),
 		stop:    make(chan struct{}),
 		done:    make(chan struct{}),
@@ -402,7 +400,7 @@ func clampDuration(d, lo, hi time.Duration) time.Duration {
 // freshly resolved environment must be successfully re-applied. Anything less
 // discards the entry and cold-starts a new one. The environment is re-resolved
 // on every call, never read from what the Runner was first acquired with.
-func (p *Pool) Acquire(ctx context.Context, principal loopauth.Principal) (Runner, error) {
+func (p *Pool) Acquire(ctx context.Context, principal Principal) (Runner, error) {
 	env := p.src.resolveEnv()
 
 	p.mu.Lock()
@@ -473,7 +471,7 @@ func (p *Pool) Acquire(ctx context.Context, principal loopauth.Principal) (Runne
 // pool lock: starting a container can take seconds, and holding the lock across
 // it would make one principal's cold start block every other principal's warm
 // checkout.
-func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (Runner, error) {
+func (p *Pool) acquireFresh(ctx context.Context, principal Principal) (Runner, error) {
 	start := p.now()
 	runner, err := p.src.Acquire(ctx, principal)
 	if err != nil {
@@ -497,9 +495,7 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 		// health.go's classifyExit comment guards against for command exits —
 		// and would drown the genuine acquire_failed signal (no daemon, a
 		// rejected mount) an operator actually needs to see.
-		// warnHostedWorkspaceUnavailable's startup notice is the correct
-		// operator-facing channel for this fault.
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) && !errors.Is(err, ErrNoTenantRoot) {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) {
 			hooks := p.src.healthHooks()
 			hooks.fire(HealthInfo{
 				Principal: principal,
@@ -569,7 +565,7 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 // returns ErrPrincipalMismatch AND tears the Runner down. It is not re-pooled
 // under either key: a caller confused about whose context it holds is exactly
 // the situation in which keeping the context alive is dangerous.
-func (p *Pool) Release(ctx context.Context, principal loopauth.Principal, r Runner, cause ReleaseCause) error {
+func (p *Pool) Release(ctx context.Context, principal Principal, r Runner, cause ReleaseCause) error {
 	pr, ok := r.(*pooledRunner)
 	if !ok || pr.pool != p {
 		return ErrForeignRunner
@@ -600,7 +596,7 @@ func (p *Pool) Close(ctx context.Context) error {
 			victims = append(victims, e)
 		}
 	}
-	p.entries = make(map[loopauth.Principal]*poolEntry)
+	p.entries = make(map[Principal]*poolEntry)
 	p.live = make(map[*poolEntry]struct{})
 	p.mu.Unlock()
 
@@ -740,7 +736,7 @@ func (p *Pool) fireReaped(i ReleaseInfo) {
 // at the cold start and refusing anything that no longer matches is the
 // strongest statement this layer can make on its own, and it is exactly the
 // statement that catches drift.
-func certifyEntry(e *poolEntry, principal loopauth.Principal) bool {
+func certifyEntry(e *poolEntry, principal Principal) bool {
 	if e.principal != principal {
 		return false
 	}
@@ -863,7 +859,7 @@ func (r *pooledRunner) Release(ctx context.Context) error {
 
 // releaseTo is the single release path. checkPrincipal is false only for the
 // self-release above, which sources the principal from the entry itself.
-func (r *pooledRunner) releaseTo(ctx context.Context, principal loopauth.Principal, cause ReleaseCause, checkPrincipal bool) error {
+func (r *pooledRunner) releaseTo(ctx context.Context, principal Principal, cause ReleaseCause, checkPrincipal bool) error {
 	r.mu.Lock()
 	if r.released {
 		r.mu.Unlock()

@@ -11,8 +11,7 @@ import (
 
 // loopBaseRegistry returns the base registry a loop's root is built on
 // (change 0116). A tool-less config (no_tools) yields an empty registry and
-// build never runs; otherwise it is build(). The one-shot CLI and the loop
-// server both compose through here, so the two entry points cannot drift.
+// build never runs; otherwise it is build().
 func loopBaseRegistry(cfg config.Config, build func() *tools.Registry) *tools.Registry {
 	if cfg.NoTools {
 		return tools.NewRegistry()
@@ -47,7 +46,7 @@ func withoutNoTools(cfg config.Config, w io.Writer, entry string) config.Config 
 	if !cfg.NoTools {
 		return cfg
 	}
-	fmt.Fprintf(w, "warning: no_tools applies to one-shot runs and the loop server; %s runs with its tools\n", entry)
+	fmt.Fprintf(w, "warning: no_tools applies to one-shot runs; %s runs with its tools\n", entry)
 	cfg.NoTools = false
 	return cfg
 }

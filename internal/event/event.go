@@ -44,13 +44,6 @@ const (
 	// change and the loop nudges the model. It never ends the run.
 	KindNoProgress Kind = "no.progress"
 	KindError      Kind = "error"
-	// KindLoopParked marks an interactive (persistent conversational) loop reaching a
-	// terminal turn and PARKING to await the next human input, rather than finishing.
-	// It is the deterministic "this exchange is complete, send your next message"
-	// signal a conversational client needs — the alternative (guessing completion from
-	// the absence of further events) is unreliable. Emitted only in interactive mode
-	// just before the park; never in a one-shot run.
-	KindLoopParked Kind = "loop.parked"
 	// KindUserInput records a user/human turn entering the model-facing transcript:
 	// the initial task at StartLoop and each human message injected at a turn
 	// boundary (ADR-0022 self-pull). It exists because user input is otherwise NOT
@@ -62,13 +55,6 @@ const (
 	// prefixed form for human turns; the raw task for the initial turn). Skipped for
 	// a resumed loop's seed history, whose user turns are already in the stream.
 	KindUserInput Kind = "user.input"
-	// KindSteerRequest is a message for a loop that another replica asked to deliver:
-	// the replica that received a Send or Steer does not run the loop, so it writes the
-	// request into the loop's durable stream, and the replica that does run the loop
-	// reads it from there and queues it like a local message. The user.input event that
-	// later records the delivery names the request (UserInputPayload.ReqSeqs), which is
-	// how a restarted owner knows what is still undelivered.
-	KindSteerRequest Kind = "steer.request"
 	// KindPermissionDecision records one permission-gate resolution: the verdict
 	// (allow/ask/deny), the pipeline layer that decided it, and a bounded command
 	// preview. It exists because gate behaviour was otherwise invisible in the
@@ -78,82 +64,6 @@ const (
 	// approval func runs and the human outcome after it as a second layer=human
 	// event, so a gate whose approver is AlwaysApprove shows as back-to-back ask→allow.
 	KindPermissionDecision Kind = "permission.decision"
-	// KindSandboxAcquire records a bash execution context being checked out for a
-	// loop: which handler and container runtime backed it, whether a warm one was
-	// reused, and how long a cold start took. It exists because the substrate a
-	// command actually ran on was otherwise unknowable after the fact — a
-	// tool.call alone cannot distinguish a contained run from an uncontained one,
-	// which is precisely the property change 0063 exists to guarantee. It also
-	// establishes the loop→container join, so an operator holding a misbehaving
-	// container id can find the loop that owns it.
-	KindSandboxAcquire Kind = "sandbox.acquire"
-	// KindSandboxRelease records the holder handing an execution context back.
-	// Paired with sandbox.acquire it makes leaks visible: an acquire with no
-	// matching release is a container the loop stranded, and the cause enum
-	// separates an ordinary hand-back from an error-path early return, which is
-	// where leaks actually come from.
-	KindSandboxRelease Kind = "sandbox.release"
-	// KindSandboxReap records the POOL taking a context away rather than the
-	// holder giving it back — idle TTL, pool close, or a warm Runner that could
-	// not be certified for reuse. It is deliberately a distinct kind from
-	// sandbox.release because reaping is not normal traffic: a steady idle_ttl
-	// reap rate means loops are abandoning containers, and a stale_checkout reap
-	// means an isolation invariant was violated.
-	KindSandboxReap Kind = "sandbox.reap"
-	// KindSandboxHealth records a substrate health transition — unhealthy, or
-	// recovered — with a closed-enum reason such as oom or runtime_exit. It exists
-	// so a container dying underneath a loop is attributable to the substrate
-	// rather than surfacing only as an opaque failed tool result, which is how
-	// such failures otherwise present and get misdiagnosed as model error.
-	KindSandboxHealth Kind = "sandbox.health"
-	// KindSandboxAdmission records an admission decision worth an operator's
-	// attention: an Exec that waited past the note threshold for a free execution
-	// slot, or an Exec refused because the host was at capacity (change 0077).
-	// Fast-path admissions emit NOTHING — one event per bash call would double the
-	// sandbox stream's volume to record that nothing happened. The queued rate and
-	// the refusal rate are the backpressure and runaway signals respectively; a
-	// refusal is deliberately separate from sandbox.health{acquire_failed} so a
-	// load event never pages an operator watching for a broken substrate.
-	KindSandboxAdmission Kind = "sandbox.admission"
-	// KindLoopHarness records the harness spec a loop was started with (change
-	// 0085), once, before the agent runs. It is what makes a loop that runs a
-	// client-supplied harness durable: a resume on any replica rebuilds the loop
-	// from this record instead of from whatever the process config happens to be.
-	// The payload carries the spec exactly as supplied (secret NAMES only, never a
-	// resolved value) and its content digest. Absent from a loop started without a
-	// spec.
-	KindLoopHarness Kind = "loop.harness"
-	// KindMCPServer records one configured MCP server's connection outcome at loop
-	// start (change 0089), one event per server (operator and spec), right after
-	// loop.harness. A server that failed to connect is reported with connected=false
-	// and its error; the loop continues without it. Never carries a credential.
-	// Emitted at EACH loop start, including a resume (which re-dials), so a
-	// stream may hold several events per server name; consumers take the latest
-	// event per server name.
-	KindMCPServer Kind = "mcp.server"
-	// KindLoopPrincipal records the credential that started the loop. It is
-	// recorded once at a networked StartLoop, right after loop.harness (first
-	// when there is no spec), and never on resume. It holds identity and audit
-	// claims only, never token material. It is absent for loops started without
-	// an authenticated principal (stdio binding, local CLI).
-	KindLoopPrincipal Kind = "loop.principal"
-	// KindToolIdentityMinted records one delegated tool-identity token minted for
-	// a call made by this loop. It never holds the token.
-	KindToolIdentityMinted Kind = "tool.identity.minted"
-	// KindLoopCancelRequest asks the replica that runs a loop to cancel it. The
-	// replica that received CancelLoop does not run the loop, so it writes the
-	// request into the loop's durable stream, the same way steer.request relays a
-	// message. The owner's relay pump honours it exactly like a local cancel. An
-	// unanswered request (no loop.cancelled after it) is as good as a cancel: a
-	// resume refuses the loop and seals it.
-	KindLoopCancelRequest Kind = "loop.cancel.request"
-	// KindLoopCancelled is the terminal event of a cancelled loop: the highest seq
-	// the loop ever appends. Every event the unwinding produced precedes it. A
-	// stream holding it never runs again (Send and resume refuse it). WasLive says
-	// whether the cancel interrupted a running or parked loop, or sealed one that
-	// had already finished or been idle-reaped. Never emitted by an idle reap or a
-	// drain: those loops stay resumable.
-	KindLoopCancelled Kind = "loop.cancelled"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -428,68 +338,6 @@ type ErrorPayload struct {
 	Turn int    `json:"turn"`
 }
 
-// LoopParkedPayload accompanies KindLoopParked. Content carries the assistant's final
-// answer text for the exchange just completed (the terminal no-tool response), so a
-// conversational client can render the reply directly from this one event instead of
-// reconstructing which model.call.end was terminal. Turn is the turn that produced it.
-type LoopParkedPayload struct {
-	Turn    int    `json:"turn"`
-	Content string `json:"content"`
-	// Reason is set when the park is not a normal exchange end: "max_turns" means
-	// the per-exchange turn cap was reached (change 0090).
-	Reason string `json:"reason,omitempty"`
-}
-
-// LoopHarnessPayload accompanies KindLoopHarness. SpecBytes is the
-// fuse.harness.v1 HarnessSpec exactly as the client supplied it, in the
-// deterministic protobuf encoding (base64 in JSON); Digest is "sha256:<hex>" over
-// those bytes (harness.Digest). A resume verifies the digest over the bytes and
-// rebuilds from them, so the record survives a replica on another protobuf or
-// schema version (unknown fields are kept). Spec is the same spec as protojson,
-// for people and tools reading the stream. It names secrets but never holds
-// their values. It does include the bodies of any skills the spec carries (at
-// most 262144 bytes in total, change 0118).
-//
-// InstalledSkillsDigest (change 0134) is the digest of the server's installed
-// skill set at the moment the loop started; a resume on a replica whose set
-// differs logs skills_drift (non-fatal).
-type LoopHarnessPayload struct {
-	Spec                  json.RawMessage `json:"spec"`
-	SpecBytes             []byte          `json:"spec_bytes"`
-	Digest                string          `json:"digest"`
-	InstalledSkillsDigest string          `json:"installed_skills_digest,omitempty"`
-}
-
-// MCPServerPayload accompanies KindMCPServer. Tools are the tool names exposed
-// to the model. It never holds a secret.
-type MCPServerPayload struct {
-	Name      string   `json:"name"`
-	Transport string   `json:"transport"`
-	AuthType  string   `json:"auth_type"`
-	Connected bool     `json:"connected"`
-	Error     string   `json:"error,omitempty"`
-	Tools     []string `json:"tools"`
-}
-
-// LoopPrincipalPayload accompanies KindLoopPrincipal. Scopes is always a JSON
-// array; an empty array means the credential was unrestricted.
-type LoopPrincipalPayload struct {
-	Subject  string   `json:"subject"`
-	ClientID string   `json:"client_id"`
-	Issuer   string   `json:"issuer"`
-	Scopes   []string `json:"scopes"` // [] = unrestricted
-	TokenID  string   `json:"token_id"`
-}
-
-// ToolIdentityMintedPayload accompanies KindToolIdentityMinted. Scope is the
-// target scopes joined by one space.
-type ToolIdentityMintedPayload struct {
-	Subject  string `json:"subject"`
-	Audience string `json:"audience"`
-	Scope    string `json:"scope"` // space-separated
-	LoopID   string `json:"loop_id"`
-}
-
 // PermissionDecisionPayload accompanies KindPermissionDecision. Command is a
 // bounded preview (the bash command truncated to ~200 chars, or a truncated
 // args preview for other tools) — never full args, which tool.call already
@@ -557,16 +405,6 @@ type ClassifierCallPayload struct {
 // duplicated into a payload, which would create a second source of truth.
 // event_test.go enforces both properties structurally.
 
-// SandboxAcquirePayload accompanies KindSandboxAcquire. ColdStartMS is omitted
-// on a warm reuse (Reused == true), where there was no start to measure.
-type SandboxAcquirePayload struct {
-	Handler     string `json:"handler"`      // "container" | "host" | "microvm"
-	Runtime     string `json:"runtime"`      // "docker" | "nerdctl" | "podman" | "" (host)
-	ContainerID string `json:"container_id"` // short id, or "" for host
-	Reused      bool   `json:"reused"`
-	ColdStartMS int64  `json:"cold_start_ms,omitempty"`
-}
-
 // SandboxCause is the closed enum of why an execution context stopped being
 // held. It is the wire form of sandbox.ReleaseCause; that package imports this
 // one, so the values cannot be referenced from here and are instead pinned
@@ -597,28 +435,6 @@ const (
 	SandboxCauseOrphan SandboxCause = "orphan"
 )
 
-// SandboxReleasePayload accompanies BOTH KindSandboxRelease and KindSandboxReap.
-// One struct serves both because the facts are identical — which substrate, and
-// why it stopped being held — and the kind already says whether the holder gave
-// it back or the pool took it away.
-type SandboxReleasePayload struct {
-	Handler     string       `json:"handler"`
-	ContainerID string       `json:"container_id"`
-	Cause       SandboxCause `json:"cause"`
-}
-
-// SandboxAdmissionPayload accompanies KindSandboxAdmission (change 0077). It is
-// payload-free in the same discipline as the four #0063 sandbox payloads: three
-// closed enums and a latency number, and NEVER the command, the environment, or
-// the output. Tenant, loop, and node come from the envelope and are never
-// duplicated here.
-type SandboxAdmissionPayload struct {
-	Handler string `json:"handler"`           // closed enum: container | host | microvm
-	Outcome string `json:"outcome"`           // closed enum: queued | refused
-	Scope   string `json:"scope"`             // closed enum: global | tenant (which bound bound it)
-	WaitMS  int64  `json:"wait_ms,omitempty"` // queue time; absent on an immediate refusal
-}
-
 // SandboxAdmissionOutcome is the closed enum of SandboxAdmissionPayload.Outcome.
 // The values are the wire form of sandbox.AdmissionInfo's disposition; the
 // sandbox package imports this one, so they are kept in lockstep by the
@@ -634,23 +450,11 @@ const (
 	SandboxAdmissionRefused SandboxAdmissionOutcome = "refused"
 )
 
-// SandboxHealthPayload accompanies KindSandboxHealth. Reason is a closed enum —
-// oom | runtime_exit | pull_failed | acquire_failed | floor_unverified —
-// and never the underlying error text, which is unbounded.
-type SandboxHealthPayload struct {
-	Handler     string `json:"handler"`
-	ContainerID string `json:"container_id"`
-	Healthy     bool   `json:"healthy"`
-	Reason      string `json:"reason"`
-}
-
 // SandboxHealthReason is the closed enum of SandboxHealthPayload.Reason.
 //
 // These are named constants rather than the doc comment they used to be
 // (change 0065, task 7) for the same reason SandboxCause and
-// SandboxAdmissionOutcome are: the value becomes a Prometheus label
-// (fuse_sandbox_unhealthy_total{reason=...}), and a closed enum that exists
-// only in prose is one typo away from unbounded cardinality. Declaring them
+// SandboxAdmissionOutcome are. Declaring them
 // here also gives the translator in internal/tools an exhaustive switch to be
 // checked against, and event_test.go a set to pin.
 //
@@ -690,41 +494,9 @@ const (
 type UserInputPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
-	// Source names a non-human speaker for a steered turn (e.g. "orchestrator"); empty
-	// for a plain human or task turn. Informational only - the resume fold ignores it.
+	// Source names a non-human speaker for a steered turn; empty for a plain human or
+	// task turn. Informational only.
 	Source string `json:"source,omitempty"`
-	// ReqSeqs are the steer.request events this turn delivered, when it carries messages
-	// that another replica relayed. Empty for a locally sent message.
-	ReqSeqs []Seq `json:"req_seqs,omitempty"`
-}
-
-// SteerRequestPayload accompanies KindSteerRequest.
-type SteerRequestPayload struct {
-	Content string `json:"content"`
-	// Source is "human" or "orchestrator".
-	Source string `json:"source,omitempty"`
-	// Interrupt asks the owner to cancel the loop's in-flight step.
-	Interrupt bool `json:"interrupt,omitempty"`
-}
-
-// LoopCancelRequestPayload accompanies KindLoopCancelRequest.
-type LoopCancelRequestPayload struct {
-	Reason      string `json:"reason,omitempty"`
-	RequestedBy string `json:"requested_by,omitempty"` // principal subject, never a token
-}
-
-// LoopCancelledPayload accompanies KindLoopCancelled.
-type LoopCancelledPayload struct {
-	Reason      string `json:"reason,omitempty"`
-	RequestedBy string `json:"requested_by,omitempty"` // principal subject, never a token (ADR-0046)
-	WasLive     bool   `json:"was_live"`
-	// RequestSeq is the seq of the loop.cancel.request this answers; 0 for a
-	// cancel made on the owning replica.
-	RequestSeq uint64 `json:"request_seq,omitempty"`
-	// Superseded marks a loop.cancelled its writer appended knowing the stream
-	// already held an earlier one (the first is authoritative). It records the
-	// writer's own seal, never a second cancel, so it is never counted as one.
-	Superseded bool `json:"superseded,omitempty"`
 }
 
 // NoProgressPayload accompanies KindNoProgress: Calls tool calls across the agent

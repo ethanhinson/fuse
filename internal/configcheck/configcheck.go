@@ -1,10 +1,8 @@
 // Package configcheck holds the config validation rules that need more than the
 // config itself - today, model-alias references, which need the resolved
 // model.Registry (change 0084). It sits above internal/config (keeping config a
-// leaf package) and below every caller that validates a config: the CLI startup
-// gate in cmd/fuse and the harness-spec validator in
-// github.com/ethanhinson/fuse/harness. Before change 0084 these rules lived in
-// cmd/fuse (package main), where nothing else could reuse them.
+// leaf package) and below every caller that validates a config, such as the CLI
+// startup gate in cmd/fuse.
 package configcheck
 
 import (
@@ -37,8 +35,8 @@ func Registry(cfg config.Config) *model.Registry {
 // ModelRefProblems checks that every model alias referenced in cfg resolves in
 // reg. A dangling reference otherwise fails only at the first gateway call for
 // that model - often deep into a run - so surfacing it up front is a real
-// usability win. The default model alias, both context-classifier models, the
-// auto-mode classifier and the orchestrator model are checked; empty (unset)
+// usability win. The default model alias, both context-classifier models and the
+// auto-mode classifier are checked; empty (unset)
 // refs are skipped. Each problem's Err is the exact startup error the CLI has
 // always printed.
 func ModelRefProblems(cfg config.Config, reg *model.Registry) []config.Problem {
@@ -59,7 +57,6 @@ func ModelRefProblems(cfg config.Config, reg *model.Registry) []config.Problem {
 	check("context.summarization.model", cfg.Context.Summarization.Model)
 	check("context.relevance.classifier_model", cfg.Context.Relevance.ClassifierModel)
 	check("permissions.auto.classifier_model", cfg.Permissions.Auto.ClassifierModel)
-	check("orchestrator.model", cfg.Orchestrator.Model)
 	return ps
 }
 

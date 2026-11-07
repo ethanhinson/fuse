@@ -1,71 +1,30 @@
-# Observability operations
+# Tracing
 
-`deploy/observability` is a **development-only** stack: Prometheus, Grafana, an OpenTelemetry Collector, and Tempo. It intentionally omits Loki. Start it with `docker compose -f deploy/observability/docker-compose.yml up`; start `fuse loop-serve-net` separately with metrics on `0.0.0.0:9090`. The collector accepts OTLP on `0.0.0.0:4317` and `0.0.0.0:4318` so the published development ports and the Collector-to-Tempo OTLP route are reachable from their containers. These unauthenticated listener bindings are strictly for local development and must never be exposed as a production deployment. Production operators own TLS, authentication, network policy, storage, retention, backups, and access review for Prometheus, Tempo, and the log collector.
-
-Metric labels are opaque `tenant_id`, model, and tool identifiers only. Do not put display names, loop/node IDs, trace/span IDs, prompts, payloads, URLs, paths, raw errors, or user-visible names in labels. Keep opaque-ID/display-name mappings in an access-controlled system outside Prometheus. Trace and structured-log metadata are tenant-sensitive operational data; limit access accordingly.
-
-For exact capacity planning, let `T`, `M`, and `U` be the configured tenant/model/tool cardinality budgets, each including its one reserved `__overflow__` value; `R` replicas; `O=7` operations; `Q=4` outcomes; `E=13` event kinds; and `H` histogram buckets. Each configured budget must be at least one, and at most `budget - 1` values may be pinned or admitted from its catalog. Per replica: loop = `T*O*Q + T*O*Q*(H+2) + T*O`; model = `T*M*Q + 2*T*M*Q*(H+2)`; tool = `T*U*Q + T*U*Q*(H+2)`; spawn = `T*Q + T*Q*(H+2)`; projection = `E*Q + Q*(H+2)`; cardinality diagnostics = `9`; cancelled = `2*T`. Multiply their sum by `R`. `fuse_metrics_label_budget` reports that total configured limit, while `fuse_metrics_label_admitted_values` excludes the reserved overflow value. Export/drop/reopen/override families are bounded by configured repository-owned signal/reason/scope vocabularies and must be budgeted before production rollout. `__overflow__` means incomplete attribution; tenant alerts exclude it and `FuseOverflowAttributionIncomplete` reports it separately. Dashboard `rate()`/`increase()` queries are restart-safe. Logging reload and reopen mutate process-global state and require a trusted `loop_server.auth` principal with `observability_operator: true`; ordinary tenant principals retain only tenant-scoped override control.
-
-Collect stdout through the platform collector. For file logs, use rename-create-reopen rotation: rename the old file, create the replacement with correct ownership/mode, then call the authenticated reopen endpoint (or send SIGHUP). `copytruncate` is unsupported because concurrent writes can be lost or duplicated. An incident journey is Grafana → Tempo trace → approved structured-log collector → authenticated tenant-authorized replay; trace IDs and dashboard URLs never authorize replay.
-
-Run `go run ./deploy/observability/validate.go`; when installed, also run `docker compose -f deploy/observability/docker-compose.yml config`.
-
-## Loop cancellation
-
-`fuse_loops_cancelled_total{tenant_id, was_live}` is a counter projected from the `loop.cancelled` event. `was_live` is `true` or `false` (whether the loop was running in this process when it was cancelled). A second `loop.cancelled` its writer appended knowing the stream already held one is marked `superseded` and is not counted. The cancellation reason is never a label. Its per-replica series bound is `2*T`.
-
-## Local run paths (`fuse shell`, one-shot, runtime bindings)
-
-Observability is not limited to `loop-serve-net`. When the `observability:` block is
-present and enabled, `fuse shell`, one-shot `fuse <task>`, and the local runtime
-bindings construct the same composite observer and emit the same traces and
-operation metrics — the root loop span included. Telemetry stays **off** when the
-block is absent or every signal's `enabled` is `false`: an empty config yields a
-no-op observer and behaves exactly as before.
-
-Two behaviors are deliberate:
-
-- **Invalid config fails startup fast.** The observability block is validated at
-  startup; a malformed block refuses to start with a precise error rather than
-  silently degrading to no-op. See the required keys below.
-- **A metrics-endpoint bind failure warns and continues.** If `metrics.bind` is
-  already in use, the run logs the error to stderr and keeps going with traces and
-  logs still active — observability never breaks the primary tool.
-
-### Minimum valid config
-
-When `metrics.enabled` is true, `cardinality.hash_version`, a per-dimension
-`budget >= 1`, and (when `logging.enabled`) `logging.max_override_ttl` are all
-**required** — omitting any one is a startup error:
+fuse can export OpenTelemetry traces of `fuse shell`, one-shot `fuse <task>` and
+`research-probe` runs over OTLP. Tracing is **off** when the `observability:` block is absent
+or `traces.enabled` is false: an empty config yields a no-op observer.
 
 ```yaml
 observability:
-  instance_id: "local"
-  metrics:
-    enabled: true
-    bind: "127.0.0.1:9090"     # Prometheus scrapes host.docker.internal:9090
-    path: "/metrics"
-    access: public              # local loopback only; never public in production
+  instance_id: "local"          # empty: $FUSE_INSTANCE_ID, then the hostname
   traces:
     enabled: true
-    endpoint: "127.0.0.1:4317"  # OTLP gRPC receiver
-    protocol: grpc
+    endpoint: "127.0.0.1:4317"  # OTLP receiver
+    protocol: grpc              # or http/protobuf
     insecure: true              # local only
     sample_ratio: 1.0
-  logging:
-    enabled: true
-    output: stdout
-    level: info
-    max_override_ttl: "1h"      # required whenever logging is enabled
-  cardinality:
-    hash_version: "sha256-64-v1"  # the only supported version
-    salt: "local"
-    tenant: { budget: 50 }
-    model:  { budget: 50 }
-    tool:   { budget: 100 }
+    headers: {}
 ```
 
-Local runs have no authenticated tenant, so metrics attribute to
-`tenant_id="__overflow__"` — expected, not a misconfiguration. For a full
-step-by-step walkthrough of running against the dev stack and viewing the
-dashboard, see [observability-local.md](observability-local.md).
+The block is honored only from the trusted `~/.fuse/config.yml`; a repo's `.fuse.local.yml`
+cannot point your telemetry anywhere.
+
+Two behaviors are deliberate:
+
+- **An invalid block fails startup fast**, with a precise error, rather than silently
+  degrading to no tracing.
+- **An exporter outage never holds up the run.** Spans are exported from a bounded background
+  queue and dropped when it is full.
+
+In the shell, the OTEL SDK's own diagnostics go to a log file rather than the terminal, because
+an async export error written to stderr would shear the alternate screen.

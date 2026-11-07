@@ -39,20 +39,3 @@ func (decoratingObserver) DecorateScope(ctx context.Context, d Descriptor) conte
 	}
 	return ctx
 }
-
-// TestDecorateScopeAppliesOnlyWhenSupported pins the capability helper an operation
-// uses when it must inherit an operation's SCOPE without starting a span — a resumed
-// session, which continues a loop whose root span already ended and was exported.
-func TestDecorateScopeAppliesOnlyWhenSupported(t *testing.T) {
-	d := Descriptor{Kind: OperationLoop, Name: "run", Fields: []Field{{Key: "tenant", Value: "acme"}}}
-
-	got := DecorateScope(decoratingObserver{}, context.Background(), d)
-	if v, _ := got.Value(scopeKey{}).(string); v != "acme" {
-		t.Errorf("decorated scope = %q, want %q", v, "acme")
-	}
-
-	ctx := context.Background()
-	if out := DecorateScope(NoopObserver{}, ctx, d); out != ctx {
-		t.Error("an observer without the capability must receive its context back unchanged")
-	}
-}

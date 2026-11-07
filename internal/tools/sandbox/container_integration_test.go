@@ -23,8 +23,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 func TestContainerSmokeAgainstRealCLI(t *testing.T) {
@@ -62,7 +60,7 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 	const secretValue = "hunter2-container-smoke-do-not-leak"
 	t.Setenv(secretKey, secretValue)
 
-	principal := loopauth.Principal{Tenant: "t-smoke", Subject: "s-smoke"}
+	principal := Principal{Tenant: "t-smoke", Subject: "s-smoke"}
 	env := ResolveEnvFromOS(nil)
 
 	r, err := h.Acquire(ctx, principal, env)

@@ -19,7 +19,7 @@
         "type": "string"
       },
       "tools": {
-        "description": "Optional subset of parent tools to give the child. IMPORTANT: a non-empty subset that omits the blackboard_* tools WITHHOLDS shared-memory access from the child — it then cannot read or write the shared blackboard. If you are spawning children to collaborate through the blackboard (debate, ensemble, producer/consumer), either omit this field (the child inherits all tools) or include the blackboard_* tools you need (e.g. blackboard_write, blackboard_read, blackboard_keys) in the subset.",
+        "description": "Optional subset of parent tools to give the child. Omit it to inherit all of them.",
         "items": {
           "type": "string"
         },

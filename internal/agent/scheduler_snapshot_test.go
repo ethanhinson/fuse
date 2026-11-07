@@ -11,17 +11,6 @@ import (
 // These tests construct a tree + pool + queue state and assert the copy reflects
 // it exactly.
 
-// findPool returns the PoolSnapshot for poolID (workflow root node ID, or "" for
-// the implicit session pool), and whether it was present.
-func findPool(snap SchedulerSnapshot, poolID string) (PoolSnapshot, bool) {
-	for _, p := range snap.Pools {
-		if p.PoolID == poolID {
-			return p, true
-		}
-	}
-	return PoolSnapshot{}, false
-}
-
 func TestSnapshotGlobalCounters(t *testing.T) {
 	tr := NewAgentTreeWithConcurrency("root", "m", 4)
 	sc := tr.Scheduler()
@@ -58,92 +47,6 @@ func TestSnapshotGlobalCounters(t *testing.T) {
 	}
 }
 
-func TestSnapshotPerPoolCounters(t *testing.T) {
-	tr := NewAgentTreeWithConcurrency("root", "m", 8)
-	sc := tr.Scheduler()
-
-	// A registered workflow pool rooted at a depth-1 node.
-	wf := &AgentNode{ID: newNodeID(), ParentID: tr.RootID(), Label: "wf", Depth: 1, Status: StatusRunning, WorkflowRoot: "research"}
-	tr.addNode(wf)
-	sc.RegisterPool(wf.ID, WorkflowPool{Concurrent: 5, Total: 20, Tokens: 500})
-
-	// Two children under the pool root: one running, one pending, with token spend.
-	// SubtreeActiveCounts/SubtreeTokens exclude the pool-root holder itself.
-	ca := newNodeID()
-	cb := newNodeID()
-	tr.addNode(&AgentNode{ID: ca, ParentID: wf.ID, Depth: 2, Status: StatusRunning})
-	tr.addNode(&AgentNode{ID: cb, ParentID: wf.ID, Depth: 2, Status: StatusPending})
-	tr.Node(ca).UpdateTokens(200, 110) // subtree spend 310
-
-	snap := sc.Snapshot()
-	p, ok := findPool(snap, wf.ID)
-	if !ok {
-		t.Fatalf("workflow pool %q missing from snapshot: %+v", wf.ID, snap.Pools)
-	}
-	if p.Workflow != "research" {
-		t.Errorf("pool Workflow = %q, want research", p.Workflow)
-	}
-	if p.SlotsInUse != 2 {
-		t.Errorf("pool SlotsInUse = %d, want 2", p.SlotsInUse)
-	}
-	if p.SlotTotal != 5 {
-		t.Errorf("pool SlotTotal = %d, want 5", p.SlotTotal)
-	}
-	if p.TokenSpend != 310 || p.TokenQuota != 500 {
-		t.Errorf("pool tokens = %d/%d, want 310/500", p.TokenSpend, p.TokenQuota)
-	}
-}
-
-func TestSnapshotQueuedDepth(t *testing.T) {
-	tr := NewAgentTreeWithConcurrency("root", "m", 1)
-	sc := tr.Scheduler()
-
-	// Occupy the one slot so any further acquire must park in its pool's FIFO.
-	if err := sc.acquireSlot(context.Background(), "research"); err != nil {
-		t.Fatal("initial acquire should grant on an empty cap-1 pool")
-	}
-	done := make(chan struct{})
-	go func() {
-		// This acquire blocks in the "research" pool FIFO until we release.
-		sc.acquireSlot(context.Background(), "research")
-		close(done)
-	}()
-
-	// Wait until the waiter is definitely parked.
-	deadline := time.After(2 * time.Second)
-	for sc.queuedDepth("research") < 1 {
-		select {
-		case <-deadline:
-			t.Fatal("waiter never parked in the research pool FIFO")
-		case <-time.After(time.Millisecond):
-		}
-	}
-
-	// The pool need not be registered to appear in the queue; register it so the
-	// snapshot surfaces it as a pool with a queued depth.
-	wf := &AgentNode{ID: "research", ParentID: tr.RootID(), Depth: 1, Status: StatusRunning, WorkflowRoot: "research"}
-	tr.addNode(wf)
-	sc.RegisterPool("research", WorkflowPool{Concurrent: 1})
-
-	snap := sc.Snapshot()
-	p, ok := findPool(snap, "research")
-	if !ok {
-		t.Fatalf("research pool missing from snapshot: %+v", snap.Pools)
-	}
-	if p.Queued != 1 {
-		t.Errorf("pool Queued = %d, want 1", p.Queued)
-	}
-
-	// Release both slots so the parked waiter completes and the goroutine exits.
-	sc.releaseSlot()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("parked waiter never granted after release")
-	}
-	sc.releaseSlot()
-}
-
 func TestSnapshotImplicitPoolOnlyWhenActive(t *testing.T) {
 	tr := NewAgentTreeWithConcurrency("root", "m", 4)
 	sc := tr.Scheduler()
@@ -163,11 +66,59 @@ func TestSnapshotImplicitPoolOnlyWhenActive(t *testing.T) {
 		t.Fatalf("acquire slot: %v", err)
 	}
 	snap := sc.Snapshot()
-	p, ok := findPool(snap, "")
+	ok := len(snap.Pools) > 0
+	var p PoolSnapshot
+	if ok {
+		p = snap.Pools[0]
+	}
 	if !ok {
 		t.Fatalf("implicit pool missing once a freeform child runs: %+v", snap.Pools)
 	}
 	if p.SlotsInUse != 1 || p.SlotTotal != 4 {
 		t.Errorf("implicit pool slots = %d/%d, want 1/4 (granted slots only, pending excluded)", p.SlotsInUse, p.SlotTotal)
 	}
+}
+
+func TestSnapshotQueuedDepth(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 1)
+	sc := tr.Scheduler()
+
+	// Occupy the one slot so any further acquire must park in the FIFO.
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatal("initial acquire should grant on an empty cap-1 pool")
+	}
+	done := make(chan struct{})
+	go func() {
+		// This acquire blocks in the FIFO until we release.
+		sc.acquireSlot(context.Background(), "")
+		close(done)
+	}()
+
+	// Wait until the waiter is definitely parked.
+	deadline := time.After(2 * time.Second)
+	for sc.queuedDepth("") < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("waiter never parked in the FIFO")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	snap := sc.Snapshot()
+	if len(snap.Pools) == 0 {
+		t.Fatalf("pool missing from snapshot: %+v", snap)
+	}
+	p := snap.Pools[0]
+	if p.Queued != 1 {
+		t.Errorf("pool Queued = %d, want 1", p.Queued)
+	}
+
+	// Release both slots so the parked waiter completes and the goroutine exits.
+	sc.releaseSlot()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("parked waiter never granted after release")
+	}
+	sc.releaseSlot()
 }

@@ -16,14 +16,13 @@ CI is green. Everything the release runs except the publishing half is already
 exercised on every pull request by the `release-dry-run` job in
 [`.github/workflows/integration.yml`](../.github/workflows/integration.yml):
 `goreleaser check`, a full
-`goreleaser release --snapshot --clean --skip=publish,docker`, the archive-layout
+`goreleaser release --snapshot --clean --skip=publish`, the archive-layout
 assertion, and [`scripts/install_test.sh`](../scripts/install_test.sh) against the
-snapshot `dist/`. What is *not* covered until a real tag is the GHCR push, the
-docker manifests, and the two attestations.
+snapshot `dist/`. What is *not* covered until a real tag is the GitHub release and the
+attestation.
 
 Version numbers are plain semver with a `v` prefix. A tag carrying a pre-release
-segment (`v0.2.0-rc.1`) publishes as a GitHub pre-release and does **not** move
-the `:latest` image tag.
+segment (`v0.2.0-rc.1`) publishes as a GitHub pre-release.
 
 ## Cut the release
 
@@ -41,27 +40,15 @@ The `Release` workflow has two jobs:
    runs deliberately even though pull requests already test: `integration.yml`
    does not run on tag pushes, and a tag can point at any commit.
 2. **`release`** (needs `test`) — checkout at `fetch-depth: 0`, Go from
-   `go.mod`, QEMU + buildx (the linux/arm64 image is emulated on an amd64
-   runner), `docker/login-action` against `ghcr.io`, then
-   `goreleaser release --clean`, then attestations.
+   `go.mod`, then `goreleaser release --clean`, then the attestation.
 
-Three steps are worth reading the log of:
+Two steps are worth reading the log of:
 
-- **GoReleaser.** Confirm it publishes the archives, the checksums file, and the
-  per-arch images, and that the version it derived is the tag you pushed. A
-  shallow clone or a missing tag shows up here.
-- **`Resolve the published image digest`.** It reads the digest for
-  `ghcr.io/ethanhinson/fuse:<version>` out of `dist/artifacts.json`
-  (`extra.Digest`) and falls back to `docker buildx imagetools inspect`. A
-  `::warning::` here means GoReleaser changed that field — the fallback carried
-  the run, and the `jq` path should be fixed. Resolving no digest by either route
-  is a hard failure, on purpose: the workflow refuses to attest nothing.
-- **The two `attest-build-provenance` steps.** One covers `dist/*.tar.gz` plus
-  `dist/*_checksums.txt`; the other covers the image by digest (not by tag) and
-  pushes the attestation to the registry.
+- **GoReleaser.** Confirm it publishes the archives and the checksums file, and that the
+  version it derived is the tag you pushed. A shallow clone or a missing tag shows up here.
+- **`attest-build-provenance`.** It covers `dist/*.tar.gz` plus `dist/*_checksums.txt`.
 
-When it is green, check the published release page and
-`https://github.com/ethanhinson/fuse/pkgs/container/fuse`.
+When it is green, check the published release page.
 
 ## Verify the artifacts
 
@@ -81,13 +68,8 @@ sha256sum --ignore-missing -c "fuse_${VERSION}_checksums.txt"
 gh attestation verify "fuse_${VERSION}_linux_amd64.tar.gz" --repo ethanhinson/fuse
 gh attestation verify "fuse_${VERSION}_checksums.txt"      --repo ethanhinson/fuse
 
-# Layout: fuse plus BOTH forwarders plus README.md, all at the archive root.
+# Layout: fuse plus README.md at the archive root.
 tar tzf "fuse_${VERSION}_linux_amd64.tar.gz"
-
-# Image.
-gh attestation verify "oci://ghcr.io/ethanhinson/fuse:${VERSION}" --repo ethanhinson/fuse
-docker run --rm "ghcr.io/ethanhinson/fuse:${VERSION}" version
-docker buildx imagetools inspect "ghcr.io/ethanhinson/fuse:${VERSION}"
 ```
 
 Then the installer end to end:
@@ -97,22 +79,7 @@ FUSE_VERSION="${VERSION}" FUSE_INSTALL_DIR="$(mktemp -d)" \
   sh -c 'curl -fsSL https://raw.githubusercontent.com/ethanhinson/fuse/main/scripts/install.sh | sh'
 ```
 
-Expect all three binaries installed and `fuse version` printing the tagged
-version. For a full release, also confirm `:latest` moved:
-
-```sh
-docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:latest
-```
-
-For a pre-release tag, confirm neither floating tag moved: both `:latest` and
-`:X.Y` are declared with `skip_push: auto`, so a `-rc.N` tag publishes `:X.Y.Z`
-only.
-
-```sh
-# Both must still resolve to the last GA build, not the rc.
-docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:latest
-docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:0.2
-```
+Expect `fuse` installed and `fuse version` printing the tagged version.
 
 ## Yanking a bad release
 
@@ -133,10 +100,6 @@ git tag -d v0.1.0
 git tag -a v0.1.1 -m 'v0.1.1' && git push origin v0.1.1
 ```
 
-GHCR images are not removed by `gh release delete`. Delete the bad version from
-the package's versions page (or `gh api -X DELETE`) if it must not be pullable;
-otherwise leave it and let `:latest` and `:X.Y` move forward with `v0.1.1`.
-
 Deleting a release does not delete its attestations, and that is fine: an
 attestation binds provenance to bytes, so a verified yanked archive is still a
 yanked archive. Say so in the replacement release's notes.
@@ -146,11 +109,8 @@ yanked archive. Say so in the replacement release's notes.
 Read the failing step before you reach for the yank procedure above, because
 these two failures are not the same thing.
 
-GoReleaser publishes the GitHub release and pushes the GHCR manifests *before*
-either attestation step runs — the image attestation cannot run earlier, because
-the digest it binds to does not exist until the push. So a run that fails in
-`Resolve the published image digest` or in either `attest-build-provenance` step
-leaves a **real, public, downloadable release with no provenance**, while the
+GoReleaser publishes the GitHub release *before* the attestation step runs. So a run
+that fails in the `attest-build-provenance` step leaves a **real, public, downloadable release with no provenance**, while the
 Actions run shows red. Users following [Verify the artifacts](#verify-the-artifacts)
 will find the archives exactly where they expect and `gh attestation verify` will
 fail on them.
@@ -163,8 +123,7 @@ checksums file still verifies them. Only the provenance is missing. So:
    GoReleaser will abort on the release it already created — `release:` declares
    neither `mode: replace` nor `replace_existing_artifacts`, so an existing
    release is an error, not something it overwrites. To get provenance onto the
-   published bytes, attest them directly: download the release assets and the
-   image digest, then run [`actions/attest-build-provenance`][attest] against
+   published bytes, attest them directly: download the release assets, then run [`actions/attest-build-provenance`][attest] against
    them from a workflow dispatch, or `gh attestation` from a trusted checkout of
    the tagged commit.
 2. If that is more trouble than the release is worth, or the artifacts are

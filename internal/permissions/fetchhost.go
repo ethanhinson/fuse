@@ -283,7 +283,7 @@ func seedMatch(host string, seed []string) bool {
 // isSSRFHost reports whether host targets a loopback, private, or link-local
 // address (or the literal "localhost"). It uses net.ParseIP rather than string
 // prefixes so it cannot be fooled by textual tricks, and shares netguard.Private
-// with the loop server's spec policy (RFC-1918, fc00::/7, CGNAT, NAT64).
+// (RFC-1918, fc00::/7, CGNAT, NAT64).
 func isSSRFHost(host string) bool {
 	if host == "localhost" {
 		return true

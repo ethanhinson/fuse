@@ -74,7 +74,6 @@ func TestParseAside_IntentAndTarget(t *testing.T) {
 	}{
 		{"is @coder still running?", AsideStatus, "@coder"},
 		{"what is @coder doing", AsideLastTool, "@coder"},
-		{"what did @researcher write", AsideWrites, "@researcher"},
 		{"how many running", AsideCount, ""},
 		{"show the tree", AsideTree, ""},
 		{"sing me a song", AsideUnknown, ""},
@@ -97,36 +96,29 @@ func TestAnswerAside_FromLiveState(t *testing.T) {
 	child.AddEvent(AgentEvent{Kind: KindToolCall, Name: "edit"})
 	tree.addNode(child)
 	reg.Register("c1", "coder")
-	bb := NewBlackboard(tree)
-	bb.Put("plan/api", "stuff", "c1", "coder")
 
 	// Status.
-	got := AnswerAside(ParseAside("is @coder running"), tree, bb, reg)
+	got := AnswerAside(ParseAside("is @coder running"), tree, reg)
 	if !strings.Contains(got, "@coder") || !strings.Contains(got, "running") {
 		t.Errorf("status answer wrong: %q", got)
 	}
 	// Last tool.
-	got = AnswerAside(ParseAside("what is @coder doing"), tree, bb, reg)
+	got = AnswerAside(ParseAside("what is @coder doing"), tree, reg)
 	if !strings.Contains(got, "edit") {
 		t.Errorf("last-tool answer wrong: %q", got)
 	}
-	// Writes.
-	got = AnswerAside(ParseAside("what did @coder write"), tree, bb, reg)
-	if !strings.Contains(got, "plan/api") {
-		t.Errorf("writes answer wrong: %q", got)
-	}
 	// Count.
-	got = AnswerAside(ParseAside("how many running"), tree, bb, reg)
+	got = AnswerAside(ParseAside("how many running"), tree, reg)
 	if !strings.Contains(got, "running") {
 		t.Errorf("count answer wrong: %q", got)
 	}
 	// Unknown → helpful fallback listing capabilities.
-	got = AnswerAside(ParseAside("hello"), tree, bb, reg)
+	got = AnswerAside(ParseAside("hello"), tree, reg)
 	if !strings.Contains(got, "status") || !strings.Contains(got, "tree") {
 		t.Errorf("unknown fallback should list capabilities: %q", got)
 	}
 	// Unknown handle → names live handles.
-	got = AnswerAside(ParseAside("is @ghost running"), tree, bb, reg)
+	got = AnswerAside(ParseAside("is @ghost running"), tree, reg)
 	if !strings.Contains(got, "no node @ghost") {
 		t.Errorf("unknown-handle answer wrong: %q", got)
 	}

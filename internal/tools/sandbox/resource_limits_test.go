@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // i64 and dur are pointer constructors for building a Limits/Concurrency by hand
@@ -27,7 +26,7 @@ func argvFor(t *testing.T, limits Limits) []string {
 	h := newTestHandler(t, cfg, rec)
 	h.limits = limits // as withLimits would set at construction
 
-	r, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	r, err := h.Acquire(context.Background(), Principal{}, Env{})
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -157,7 +156,7 @@ func TestArgvCapsNotModelReachable(t *testing.T) {
 	// The model supplies an env var that looks like a cap and a command that
 	// names one. None of it may alter argv's caps.
 	env := Env{Allow: map[string]string{"MEMORY": "9999g", "PIDS_LIMIT": "1"}}
-	r, err := h.Acquire(context.Background(), loopauth.Principal{}, env)
+	r, err := h.Acquire(context.Background(), Principal{}, env)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
@@ -173,118 +172,6 @@ func TestArgvCapsNotModelReachable(t *testing.T) {
 }
 
 // --- Posture defaults --------------------------------------------------------
-
-// Unset + hosted ⇒ every hosted default applied; argv carries every cap flag.
-func TestPostureHostedFillsCapsAndArgv(t *testing.T) {
-	cli := &recordingExec{}
-	svc, err := NewService(DefaultConfig(),
-		WithHostedPosture(true),
-		WithTrustedRoot(trustedTestRoot(t)),
-		withContainerLookPath(fakeLookPath("docker")),
-		withContainerExec(cli.run),
-	)
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-
-	l := svc.Limits()
-	if l.MemoryBytes == nil || *l.MemoryBytes != defaultHostedMemoryBytes {
-		t.Errorf("hosted memory = %v, want %d", l.MemoryBytes, defaultHostedMemoryBytes)
-	}
-	if l.CPUs == nil || *l.CPUs != defaultHostedCPUs {
-		t.Errorf("hosted cpus = %v, want %q", l.CPUs, defaultHostedCPUs)
-	}
-	if l.Pids == nil || *l.Pids != defaultHostedPids {
-		t.Errorf("hosted pids = %v", l.Pids)
-	}
-	if l.PullTimeout == nil || *l.PullTimeout != DefaultPullTimeout {
-		t.Errorf("pull_timeout = %v, want %v", l.PullTimeout, DefaultPullTimeout)
-	}
-
-	runner, err := svc.Acquire(context.Background(), testPrincipal())
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	if _, err := runner.Exec(context.Background(), "true", ""); err != nil {
-		t.Fatalf("Exec: %v", err)
-	}
-	argv := cli.runCalls()[0]
-	for _, flag := range []string{"--memory", "--cpus", "--pids-limit", "--ulimit"} {
-		if !contains(argv, flag) {
-			t.Errorf("hosted argv missing %s: %#v", flag, argv)
-		}
-	}
-}
-
-// Unset + local ⇒ NO cap flags at all, but the concurrency backstop and pull
-// timeout ARE applied in both postures.
-func TestPostureLocalEmitsNoCapsButKeepsConcurrency(t *testing.T) {
-	cli := &recordingExec{}
-	svc, err := NewService(DefaultConfig(),
-		WithHostedPosture(false),
-		WithTrustedRoot(trustedTestRoot(t)),
-		withContainerLookPath(fakeLookPath("docker")),
-		withContainerExec(cli.run),
-	)
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-
-	l := svc.Limits()
-	if l.MemoryBytes != nil || l.CPUs != nil || l.Pids != nil || l.NoFile != nil || l.FsizeBytes != nil {
-		t.Errorf("local posture applied caps: %+v", l)
-	}
-	// The pull timeout applies in BOTH postures.
-	if l.PullTimeout == nil || *l.PullTimeout != DefaultPullTimeout {
-		t.Errorf("local pull_timeout = %v, want %v (applies in both postures)", l.PullTimeout, DefaultPullTimeout)
-	}
-	// The concurrency backstop applies in BOTH postures (the gate is non-nil and
-	// bounded).
-	if svc.gate == nil {
-		t.Fatal("gate is nil under local posture")
-	}
-	if got := cap(svc.gate.global.tokens); int64(got) != defaultMaxInflight {
-		t.Errorf("global backstop = %d, want %d in both postures", got, defaultMaxInflight)
-	}
-
-	runner, err := svc.Acquire(context.Background(), testPrincipal())
-	if err != nil {
-		t.Fatalf("Acquire: %v", err)
-	}
-	if _, err := runner.Exec(context.Background(), "true", ""); err != nil {
-		t.Fatalf("Exec: %v", err)
-	}
-	argv := cli.runCalls()[0]
-	for _, flag := range []string{"--memory", "--cpus", "--pids-limit", "--ulimit"} {
-		if contains(argv, flag) {
-			t.Errorf("local argv carries cap flag %s: %#v", flag, argv)
-		}
-	}
-	if !contains(argv, "--pull=never") {
-		t.Errorf("local argv missing --pull=never: %#v", argv)
-	}
-}
-
-// Explicit config is honoured identically in both postures — posture only fills
-// UNSET fields.
-func TestPostureExplicitConfigHonouredInBothPostures(t *testing.T) {
-	for _, hosted := range []bool{true, false} {
-		cfg := DefaultConfig()
-		cfg.Limits = Limits{MemoryBytes: i64(512 << 20)} // an explicit small cap
-
-		svc, err := NewService(cfg,
-			WithHostedPosture(hosted),
-			WithTrustedRoot(trustedTestRoot(t)),
-			withContainerLookPath(fakeLookPath("docker")),
-		)
-		if err != nil {
-			t.Fatalf("NewService(hosted=%v): %v", hosted, err)
-		}
-		if got := svc.Limits().MemoryBytes; got == nil || *got != 512<<20 {
-			t.Errorf("hosted=%v: explicit memory not honoured: %v", hosted, got)
-		}
-	}
-}
 
 // --- Pre-pull ----------------------------------------------------------------
 
@@ -336,7 +223,7 @@ func TestPrePullFailureIsAcquireErrorAndRetried(t *testing.T) {
 	h := newTestHandler(t, DefaultConfig(), &recordingRun{})
 	h.run = pc.run
 
-	_, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	_, err := h.Acquire(context.Background(), Principal{}, Env{})
 	if err == nil {
 		t.Fatal("want an Acquire error when the pull fails")
 	}
@@ -349,7 +236,7 @@ func TestPrePullFailureIsAcquireErrorAndRetried(t *testing.T) {
 	pc.mu.Lock()
 	pc.pullErr = nil
 	pc.mu.Unlock()
-	if _, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{}); err != nil {
+	if _, err := h.Acquire(context.Background(), Principal{}, Env{}); err != nil {
 		t.Fatalf("retry Acquire: %v", err)
 	}
 	if pc.pullCount() < 2 {
@@ -370,7 +257,7 @@ func TestPrePullIsSingleFlight(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			defer wg.Done()
-			_, _ = h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+			_, _ = h.Acquire(context.Background(), Principal{}, Env{})
 		}()
 	}
 
@@ -396,7 +283,7 @@ func TestPrePullCallerDeadlineDoesNotCancelPull(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_, err := h.Acquire(ctx, loopauth.Principal{}, Env{})
+	_, err := h.Acquire(ctx, Principal{}, Env{})
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want a deadline error for the short caller, got %v", err)
 	}
@@ -411,7 +298,7 @@ func TestPrePullCallerDeadlineDoesNotCancelPull(t *testing.T) {
 		return done
 	})
 	before := pc.pullCount()
-	if _, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{}); err != nil {
+	if _, err := h.Acquire(context.Background(), Principal{}, Env{}); err != nil {
 		t.Fatalf("Acquire after warm pull: %v", err)
 	}
 	if pc.pullCount() != before {
@@ -567,4 +454,67 @@ func idxOf(args []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// Unset ⇒ NO cap flags at all, but the concurrency backstop and pull timeout ARE
+// applied.
+func TestUnsetLimitsEmitNoCapsButKeepConcurrency(t *testing.T) {
+	cli := &recordingExec{}
+	svc, err := NewService(DefaultConfig(),
+		WithTrustedRoot(trustedTestRoot(t)),
+		withContainerLookPath(fakeLookPath("docker")),
+		withContainerExec(cli.run),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	l := svc.Limits()
+	if l.MemoryBytes != nil || l.CPUs != nil || l.Pids != nil || l.NoFile != nil || l.FsizeBytes != nil {
+		t.Errorf("unset limits applied caps: %+v", l)
+	}
+	if l.PullTimeout == nil || *l.PullTimeout != DefaultPullTimeout {
+		t.Errorf("local pull_timeout = %v, want %v ", l.PullTimeout, DefaultPullTimeout)
+	}
+	// The concurrency backstop applies (the gate is non-nil and bounded).
+	if svc.gate == nil {
+		t.Fatal("gate is nil")
+	}
+	if got := cap(svc.gate.global.tokens); int64(got) != defaultMaxInflight {
+		t.Errorf("global backstop = %d, want %d", got, defaultMaxInflight)
+	}
+
+	runner, err := svc.Acquire(context.Background(), testPrincipal())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if _, err := runner.Exec(context.Background(), "true", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	argv := cli.runCalls()[0]
+	for _, flag := range []string{"--memory", "--cpus", "--pids-limit", "--ulimit"} {
+		if contains(argv, flag) {
+			t.Errorf("local argv carries cap flag %s: %#v", flag, argv)
+		}
+	}
+	if !contains(argv, "--pull=never") {
+		t.Errorf("local argv missing --pull=never: %#v", argv)
+	}
+}
+
+// Explicit limits are honoured.
+func TestExplicitLimitsHonoured(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Limits = Limits{MemoryBytes: i64(512 << 20)} // an explicit small cap
+
+	svc, err := NewService(cfg,
+		WithTrustedRoot(trustedTestRoot(t)),
+		withContainerLookPath(fakeLookPath("docker")),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if got := svc.Limits().MemoryBytes; got == nil || *got != 512<<20 {
+		t.Errorf("explicit memory not honoured: %v", got)
+	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
@@ -67,55 +66,45 @@ func TestEndOnceUnderConcurrentCallers(t *testing.T) {
 	}
 }
 
-// TestInteractiveLoopSpanEndsOnceUnderReapRace drives the guard through the REAL
-// seam (learnings: runtime-deps-field-overwrites-builder-injection — assert through
-// StartLoop, not the builder): an interactive loop parks, then an idle reap and a
-// request-ctx cancellation race the run goroutine's completion path. However the
-// race lands, fuse.loop.run must be started once and ended exactly once.
-func TestInteractiveLoopSpanEndsOnceUnderReapRace(t *testing.T) {
-	fake := newGatedCompleter(model.CompletionResp{Content: "only answer"})
+// TestLoopSpanShape: a run produces exactly one loop.run operation through the
+// production StartLoop, carrying only the tenant attribute, ended exactly once.
+func TestLoopSpanShape(t *testing.T) {
 	observer := &recordingObserver{}
+	fake := &scriptedCompleter{responses: []model.CompletionResp{{Content: "final answer"}}}
 	rt := New(Deps{
-		BaseDir:       t.TempDir(),
-		MaxConcurrent: 1,
 		Observer:      observer,
-		// Short enough that the reaper fires while the test is still cancelling the
-		// request ctx, so teardown and completion genuinely overlap.
-		IdleTTL: 50 * time.Millisecond,
-		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, r *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
-			return agent.New(fake, execAll{r}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
+		MaxConcurrent: 1,
+		BuildAgent: func(_ event.EventStore, _ *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, error) {
+			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil
 		},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	h, err := rt.StartLoop(ctx, LoopConfig{Task: "hi", ModelID: "cloud/x", Interactive: true})
+	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", ModelID: "cloud/x"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	fake.admit(0)
-	waitForKind(t, evCh, event.KindLoopParked, 2*time.Second)
-	// Drop the live Observe so the session is genuinely idle and the reaper arms.
-	unsub()
-
-	// Race the client disconnect against the reaper-driven completion.
-	go cancel()
-
-	select {
-	case <-doneOf(h):
-	case <-time.After(3 * time.Second):
-		t.Fatal("parked interactive loop was not reaped within the timeout")
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
 
-	if ops := observer.opsNamed("run"); len(ops) != 1 {
-		t.Fatalf("started %d loop.run operations, want exactly 1", len(ops))
+	runs := observer.opsNamed("run")
+	if len(runs) != 1 {
+		t.Fatalf("started %d loop.run operations, want exactly 1", len(runs))
 	}
-	if ends := observer.endsFor("run"); len(ends) != 1 {
+	if runs[0].kind != observe.OperationLoop {
+		t.Errorf("loop.run kind = %q, want %q", runs[0].kind, observe.OperationLoop)
+	}
+	if len(runs[0].fields) != 1 {
+		t.Fatalf("loop.run fields = %+v, want exactly the tenant attribute", runs[0].fields)
+	}
+	if v, ok := fieldValue(runs[0], "tenant"); !ok || v != string(event.DefaultTenant) {
+		t.Errorf("loop.run tenant = %q (present=%v), want %q", v, ok, event.DefaultTenant)
+	}
+	ends := observer.endsFor("run")
+	if len(ends) != 1 {
 		t.Fatalf("loop.run ended %d times, want exactly 1: %+v", len(ends), ends)
+	}
+	if ends[0].outcome != observe.OutcomeSuccess {
+		t.Errorf("loop.run outcome = %q, want %q", ends[0].outcome, observe.OutcomeSuccess)
 	}
 }

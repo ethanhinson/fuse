@@ -6,20 +6,7 @@
 # POSIX sh, no bashisms: this runs under dash, ash/busybox and macOS's /bin/sh,
 # not just bash. No arrays, no [[ ]], no `local`, no `source`, no ${var,,}.
 #
-# What it installs, and why three binaries rather than one:
-#
-#   fuse                              the CLI, for THIS host's os/arch
-#   fuse-egress-forward-linux-amd64   the in-container half of egress control
-#   fuse-egress-forward-linux-arm64   (change 0064), for BOTH arches
-#
-# The forwarders are linux-only by construction and both are installed even on
-# darwin, because cmd/fuse/sandbox.go resolves
-# <dir of the fuse binary>/fuse-egress-forward-linux-<arch> where <arch> is the
-# SANDBOX IMAGE's architecture, not the host's. A macOS user driving a
-# linux/amd64 container needs the amd64 forwarder beside their darwin binary.
-# Without it `egress.mode: enforce` degrades to deny-all. The release archives
-# carry all three at their root (the archive-layout invariant documented in
-# .goreleaser.yaml); this script just preserves it on disk.
+# It installs the fuse CLI for THIS host's os/arch.
 #
 # Environment:
 #   FUSE_VERSION           version to install. Accepts `v0.1.0` or `0.1.0`.
@@ -364,35 +351,27 @@ main() {
 	tar -xzf "${TMPDIR_FUSE}/${ARCHIVE}" -C "${UNPACK}" ||
 		die "could not unpack ${ARCHIVE}."
 
-	# The archive-layout invariant, asserted rather than assumed: a release that
-	# dropped a forwarder must fail loudly here instead of installing a fuse
-	# whose `egress.mode: enforce` is quietly deny-all.
-	for _bin in fuse fuse-egress-forward-linux-amd64 fuse-egress-forward-linux-arm64; do
-		[ -f "${UNPACK}/${_bin}" ] ||
-			die "${ARCHIVE} is missing ${_bin}; refusing a partial install."
-	done
+	# The archive-layout invariant, asserted rather than assumed.
+	[ -f "${UNPACK}/fuse" ] ||
+		die "${ARCHIVE} is missing fuse; refusing a partial install."
 
 	mkdir -p "${INSTALL_DIR}" ||
 		die "could not create ${INSTALL_DIR}. Set FUSE_INSTALL_DIR to a writable directory (this script never uses sudo)."
 	[ -w "${INSTALL_DIR}" ] ||
 		die "${INSTALL_DIR} is not writable. Set FUSE_INSTALL_DIR to a directory you own, or install there yourself with elevated privileges — this script never uses sudo."
 
-	for _bin in fuse fuse-egress-forward-linux-amd64 fuse-egress-forward-linux-arm64; do
-		# cp over install(1): install is not on every minimal image, and a
-		# plain cp + chmod is equivalent here. cp to a temp name then mv so a
-		# running fuse is replaced atomically rather than truncated mid-write.
-		cp "${UNPACK}/${_bin}" "${INSTALL_DIR}/${_bin}.tmp$$" ||
-			die "could not write ${INSTALL_DIR}/${_bin}."
-		chmod 0755 "${INSTALL_DIR}/${_bin}.tmp$$"
-		mv -f "${INSTALL_DIR}/${_bin}.tmp$$" "${INSTALL_DIR}/${_bin}" ||
-			die "could not install ${INSTALL_DIR}/${_bin}."
-	done
+	# cp over install(1): install is not on every minimal image, and a plain
+	# cp + chmod is equivalent here. cp to a temp name then mv so a running fuse is
+	# replaced atomically rather than truncated mid-write.
+	cp "${UNPACK}/fuse" "${INSTALL_DIR}/fuse.tmp$$" ||
+		die "could not write ${INSTALL_DIR}/fuse."
+	chmod 0755 "${INSTALL_DIR}/fuse.tmp$$"
+	mv -f "${INSTALL_DIR}/fuse.tmp$$" "${INSTALL_DIR}/fuse" ||
+		die "could not install ${INSTALL_DIR}/fuse."
 
 	# Step 5: report, prove, and warn about PATH.
 	info "installed:"
 	printf '  %s\n' "${INSTALL_DIR}/fuse"
-	printf '  %s\n' "${INSTALL_DIR}/fuse-egress-forward-linux-amd64"
-	printf '  %s\n' "${INSTALL_DIR}/fuse-egress-forward-linux-arm64"
 
 	if "${INSTALL_DIR}/fuse" version; then
 		:

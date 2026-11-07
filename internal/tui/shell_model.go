@@ -19,12 +19,10 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
-	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/segment"
-	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
 )
@@ -207,17 +205,14 @@ type ShellModel struct {
 
 	// Subagent tree and inline summary tracking.
 	tree       *agent.AgentTree
-	blackboard *agent.Blackboard // session blackboard for the /agents Blackboard tab
-	segments   segment.Source    // session segments for the /agents indicator + "s" (0030); nil ⇒ off
-	humanBus   *agent.HumanBus   // per-node human-message queues (ADR-0022)
+	segments   segment.Source  // session segments for the /agents indicator + "s" (0030); nil ⇒ off
+	humanBus   *agent.HumanBus // per-node human-message queues (ADR-0022)
 	handleReg  *agent.HandleRegistry
-	router     agent.RouterLLM     // async advisory classifier; nil ⇒ default routing only
-	orch       OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
-	orchMode   bool                // plain lines go to the orchestrator instead of the agent
-	queue      *queueState         // non-nil while the /queue editor is open
-	lister     ModelLister         // lists the gateway's models for the editor's discover view
-	catalog    CatalogLister       // lists the OpenRouter catalogue for the discover view
-	modelsEdit *modelsEditState    // non-nil while the /models edit editor is open
+	router     agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
+	queue      *queueState      // non-nil while the /queue editor is open
+	lister     ModelLister      // lists the gateway's models for the editor's discover view
+	catalog    CatalogLister    // lists the OpenRouter catalogue for the discover view
+	modelsEdit *modelsEditState // non-nil while the /models edit editor is open
 	// config is non-nil while the /config screen is open. It hosts the tabbed
 	// settings surface and SHARES modelsEdit with `/models edit` rather than
 	// owning a second copy of the editor.
@@ -240,23 +235,6 @@ type ShellModel struct {
 	// Never auto-re-read (D2) — the flag is purely a display cue.
 	staleResources    []staleResource
 	staleResourceSeen map[string]bool
-
-	// toolPrincipal is the authenticated loop initiator seeded onto the per-turn
-	// agent-run context (change #52), so an identity-propagating MCP tool call
-	// mints a per-call credential from it. Zero value ⇒ no principal is seeded and
-	// the egress seam (if wired) fails closed on an OAuth-tier target — never a
-	// silent downgrade. Set by the composition root via SetToolPrincipal.
-	toolPrincipal loopauth.Principal
-}
-
-// WithToolPrincipal seeds the local authorization identity (change #52) the shell
-// stamps onto each agent-run context, so an identity-propagating MCP tool call
-// mints a delegation token from it. On the single-user local shell this is the
-// configured local principal; there is no bearer token to resolve one from.
-// Chainable value method, matching WithTree/WithBlackboard.
-func (m ShellModel) WithToolPrincipal(p loopauth.Principal) ShellModel {
-	m.toolPrincipal = p
-	return m
 }
 
 // staleResource is one MCP resource flagged stale by a pushed update.
@@ -278,7 +256,7 @@ type staleResource struct {
 // when auto is active with no classifier.
 func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder, sessionMode *permissions.SessionMode, classifierAvailable bool) ShellModel {
 	in := textinput.New()
-	in.Placeholder = defaultPlaceholder
+	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
 	in.Focus()
 
@@ -326,13 +304,6 @@ func (m ShellModel) WithTree(t *agent.AgentTree) ShellModel {
 	m.tree = t
 	m.inlineByLabel = make(map[string]*inlineAgentState)
 	m.inlineByNode = make(map[string]*inlineAgentState)
-	return m
-}
-
-// WithBlackboard attaches the session blackboard so the /agents overlay can show
-// its snapshot in a Blackboard tab (change 0023). Nil renders no snapshot.
-func (m ShellModel) WithBlackboard(bb *agent.Blackboard) ShellModel {
-	m.blackboard = bb
 	return m
 }
 
@@ -475,24 +446,6 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolResultMsg:
 		return m.handleToolResult(msg)
-
-	case OrchReplyMsg:
-		text := msg.Text
-		if m.md != nil {
-			if rendered, err := m.md.Render(text); err == nil {
-				text = strings.TrimRight(rendered, "\n")
-			}
-		}
-		m.appendPre(orchStyle.Render("orchestrator") + "\n" + assistantStyle.Render(text))
-		return m, nil
-
-	case OrchActionMsg:
-		m.appendLine(orchStyle.Render("orchestrator ›") + " " + headerStyle.Render(sanitizeDisplay(msg.Text)))
-		return m, nil
-
-	case OrchErrMsg:
-		m.appendLine(orchStyle.Render("orchestrator ›") + " " + agentErrStyle.Render(sanitizeDisplay(msg.Err)))
-		return m, nil
 
 	case AgentErrMsg:
 		// Settle any still-queued calls before showing the error; their
@@ -825,16 +778,15 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if line == "" {
 			return m, nil
 		}
-		// The orchestrator and /interrupt must work mid-turn, so they come before the
-		// busy-queue below.
-		if next, cmd, handled := m.routeOrchestratorInput(line); handled {
+		// /interrupt must work mid-turn, so it comes before the busy-queue below.
+		if next, cmd, handled := m.routeInterruptInput(line); handled {
 			return next, cmd
 		}
 		// Human-messaging routing (ADR-0022): /btw, @all, @handle, /rename, and —
 		// while an agent is busy — queued messages are all handled here rather than
 		// dropped. Falls through to the normal slash/prompt path for routeNormal.
 		if m.humanBus != nil && m.handleReg != nil {
-			r := classifyInput(line, m.tree, m.handleReg, m.blackboard, m.running, len(m.asks) > 0, m.selectedNodeID())
+			r := classifyInput(line, m.tree, m.handleReg, m.running, len(m.asks) > 0, m.selectedNodeID())
 			if r.Kind != routeNormal && r.Kind != routeRespond {
 				m.input.Reset()
 				if m.completer != nil {
@@ -995,9 +947,7 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	case "/exit", "/quit":
 		return m, tea.Quit
 	// Reached from the slash menu (a typed line is routed earlier, see
-	// routeOrchestratorInput); the menu selects the bare command.
-	case "/orchestrator":
-		return m.orchestratorCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
+	// routeInterruptInput); the menu selects the bare command.
 	case "/interrupt":
 		return m.interruptCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/clear":
@@ -1027,8 +977,6 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/agents":
 		return m.enterAgentsView()
-	case "/blackboard":
-		return m.enterBlackboardView()
 	case "/approvals":
 		if len(m.approvalLog) == 0 {
 			m.appendLine(headerStyle.Render("No permission decisions this session."))
@@ -1221,8 +1169,7 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	history := m.history
 	build := m.build
 
-	tree := m.tree                   // capture for closure
-	toolPrincipal := m.toolPrincipal // capture for closure (change #52)
+	tree := m.tree // capture for closure
 	run := func() tea.Msg {
 		approve := NewTeaApprovalFunc(ch)
 		var r agent.Renderer = NewTeaRenderer(ch)
@@ -1238,15 +1185,7 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 			ch <- AgentDoneMsg{History: history}
 			return nil
 		}
-		// Seed the local authorization identity onto the run context (change #52)
-		// so an identity-propagating MCP tool call mints a per-call credential from
-		// it. A zero principal seeds nothing — the egress seam fails closed rather
-		// than minting under an empty identity.
-		runCtx := context.Background()
-		if toolPrincipal.Subject != "" {
-			runCtx = toolidentity.WithPrincipal(runCtx, toolPrincipal)
-		}
-		updated, rerr := a.Run(runCtx, history)
+		updated, rerr := a.Run(context.Background(), history)
 		if rerr != nil {
 			ch <- AgentErrMsg{Err: rerr.Error()}
 		}
@@ -1308,28 +1247,16 @@ func (m *ShellModel) refreshInlineBlocks() {
 
 // enterAgentsView switches to the AgentsModel overlay on the tree list.
 func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
-	return m.openAgentsOverlay(false)
+	return m.openAgentsOverlay()
 }
 
-// enterBlackboardView opens the AgentsModel overlay directly on the Blackboard
-// section — the /blackboard slash command. The board lives inside the agents
-// overlay (it is session-scoped, shown alongside the tree), so this is the same
-// overlay as /agents, just landed on the board.
-func (m ShellModel) enterBlackboardView() (tea.Model, tea.Cmd) {
-	return m.openAgentsOverlay(true)
-}
-
-// openAgentsOverlay builds and activates the agents overlay. When onBlackboard
-// is true it lands on the Blackboard section instead of the tree list.
-func (m ShellModel) openAgentsOverlay(onBlackboard bool) (tea.Model, tea.Cmd) {
+// openAgentsOverlay builds and activates the agents overlay.
+func (m ShellModel) openAgentsOverlay() (tea.Model, tea.Cmd) {
 	if m.tree == nil {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
-	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard).WithSegments(m.segments)
-	if onBlackboard {
-		m.agentsModel.ShowBlackboard()
-	}
+	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithSegments(m.segments)
 	m.agentsModel.width = m.vp.Width
 	m.agentsModel.height = m.vp.Height + chromeHeight
 	m.agentsActive = true
@@ -1561,13 +1488,7 @@ func isFileReadTool(name string) bool {
 // counter when children are active, so users see fan-out without opening the
 // overlay; otherwise just the Tab affordance.
 func (m ShellModel) agentsHint() string {
-	hint := m.agentsHintCore()
-	// The slash menu is closed while a turn runs, which is exactly when the orchestrator
-	// is most useful, so say that it is there.
-	if hint != "" && m.running && m.orch != nil && !m.orchMode {
-		hint += ruleStyle.Render(" · /orchestrator to steer")
-	}
-	return hint
+	return m.agentsHintCore()
 }
 
 func (m ShellModel) agentsHintCore() string {
@@ -1885,9 +1806,6 @@ func (m ShellModel) View() string {
 	}
 	rule := ruleStyle.Render(strings.Repeat("─", width))
 	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
-	if m.orchMode {
-		prompt = orchStyle.Render("[orchestrator]") + " > " + m.input.View()
-	}
 
 	var status string
 	switch {

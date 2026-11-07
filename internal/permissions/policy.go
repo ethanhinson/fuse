@@ -94,30 +94,11 @@ var safeList = map[string]bool{
 	// inherits a cloned, independently-gated gate — same rationale as spawn_agent,
 	// so the skill call itself is inert.
 	"skill": true,
-	// pipeline_run is orchestration: spawned children inherit a cloned gate and are
-	// independently re-gated — same rationale as spawn_agent.
-	"pipeline_run": true,
-	// The orchestrator's tools (internal/orchestrator) exist only on an orchestrator
-	// loop. loop_status and loop_event read the watched loop's event stream;
-	// steer_agent only sends text to that loop's agent, whose own tool calls stay
-	// gated. The person chatting with the orchestrator is the approver.
-	"loop_status": true,
-	"loop_event":  true,
-	"steer_agent": true,
 }
 
-// onSafeList returns true for the hard-coded safe set, all codeindex_* tools, and
-// all blackboard_* tools. The blackboard (change 0023) is a session-scoped,
-// in-memory shared scratchpad: its five tools (read/keys/wait are read-only;
-// write/delete mutate) touch no disk, no network, and nothing outside the current
-// agent tree, which is discarded when the run ends. Writing to it has no
-// side-effect a user needs to gate — its worst case is corrupting a scratchpad
-// that dies with the session, strictly less consequential than spawn_agent (also
-// safe-listed). Auto-approving them lets agents coordinate through the board in
-// smart mode without an approval prompt on every write; a user who wants the
-// prompt back can still demote any of them via permissions.always_prompt.
+// onSafeList returns true for the hard-coded safe set and all codeindex_* tools.
 func onSafeList(name string) bool {
-	if strings.HasPrefix(name, "codeindex_") || strings.HasPrefix(name, "blackboard_") {
+	if strings.HasPrefix(name, "codeindex_") {
 		return true
 	}
 	return safeList[name]

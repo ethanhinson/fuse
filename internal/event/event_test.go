@@ -26,20 +26,8 @@ func TestKindWireValues(t *testing.T) {
 		KindLoopTrip:           "loop.detector.trip",
 		KindNoProgress:         "no.progress",
 		KindError:              "error",
-		KindLoopParked:         "loop.parked",
 		KindUserInput:          "user.input",
 		KindPermissionDecision: "permission.decision",
-		KindSandboxAcquire:     "sandbox.acquire",
-		KindSandboxRelease:     "sandbox.release",
-		KindSandboxReap:        "sandbox.reap",
-		KindSandboxHealth:      "sandbox.health",
-		KindSandboxAdmission:   "sandbox.admission",
-		KindLoopHarness:        "loop.harness",
-		KindMCPServer:          "mcp.server",
-		KindLoopPrincipal:      "loop.principal",
-		KindToolIdentityMinted: "tool.identity.minted",
-		KindLoopCancelRequest:  "loop.cancel.request",
-		KindLoopCancelled:      "loop.cancelled",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -145,13 +133,6 @@ func TestPayloadKindsRoundTrip(t *testing.T) {
 		LoopTripPayload{Turn: 9, Reason: "policy-denied call repeated after nudge"},
 		ErrorPayload{Err: "boom", Turn: 2},
 		PermissionDecisionPayload{ToolCallID: "c1", Tool: "bash", Verdict: "deny", Layer: "rules", Reason: "denied by auto-mode rules layer: curl x", Mode: "auto", Command: "curl x"},
-		SandboxAcquirePayload{Handler: "container", Runtime: "docker", ContainerID: "9f2c1a3b", Reused: false, ColdStartMS: 812},
-		SandboxAcquirePayload{Handler: "host", Reused: true},
-		SandboxReleasePayload{Handler: "container", ContainerID: "9f2c1a3b", Cause: "released"},
-		SandboxReleasePayload{Handler: "container", ContainerID: "9f2c1a3b", Cause: "stale_checkout"},
-		SandboxHealthPayload{Handler: "container", ContainerID: "9f2c1a3b", Healthy: false, Reason: "oom"},
-		SandboxAdmissionPayload{Handler: "container", Outcome: "queued", Scope: "tenant", WaitMS: 4200},
-		SandboxAdmissionPayload{Handler: "container", Outcome: "refused", Scope: "global"},
 	}
 	for i, p := range payloads {
 		raw, err := MarshalPayload(p)
@@ -240,58 +221,6 @@ func TestSandboxAdmissionOutcomeWireValues(t *testing.T) {
 	}
 }
 
-// TestSandboxPayloadsArePayloadFree is a STRUCTURAL guard on the payload-free
-// discipline (change 0063): a sandbox event payload may carry only bounded
-// identity and closed-enum classification — never the command, its args, an env
-// key or value, process output, or a raw error string. Those are unbounded and
-// attacker/model-influenced, and events.jsonl is durable.
-//
-// It also asserts the correlation envelope is never duplicated into a payload:
-// Event.NodeID plus StreamKey{Tenant, Loop} supply correlation, so a payload
-// field named for tenant/loop/node means two sources of truth.
-//
-// The guard is structural (reflection over field names and types) rather than
-// value-based so that ADDING an offending field fails, not merely populating
-// one. Mutation-checked: renaming ContainerID to Command turns it red.
-func TestSandboxPayloadsArePayloadFree(t *testing.T) {
-	banned := []string{
-		"command", "cmd", "argv", "args", "arg",
-		"env", "environ", "secret", "token",
-		"output", "stdout", "stderr", "result", "body", "content",
-		"err", "error", "message", "msg", "path", "image", "workdir",
-		"tenant", "tenantid", "loop", "loopid", "node", "nodeid", "principal",
-	}
-	types := []reflect.Type{
-		reflect.TypeOf(SandboxAcquirePayload{}),
-		reflect.TypeOf(SandboxReleasePayload{}),
-		reflect.TypeOf(SandboxHealthPayload{}),
-		reflect.TypeOf(SandboxAdmissionPayload{}),
-	}
-	norm := func(s string) string {
-		return strings.ToLower(strings.NewReplacer("_", "", "-", "", ",omitempty", "").Replace(s))
-	}
-	for _, ty := range types {
-		for i := 0; i < ty.NumField(); i++ {
-			f := ty.Field(i)
-			names := []string{norm(f.Name), norm(strings.Split(f.Tag.Get("json"), ",")[0])}
-			for _, n := range names {
-				for _, b := range banned {
-					if n == b {
-						t.Errorf("%s.%s: field %q is banned from a payload-free sandbox payload", ty.Name(), f.Name, n)
-					}
-				}
-			}
-			// Only bounded scalars are admissible: no maps, slices, structs,
-			// interfaces, or pointers, each of which can smuggle unbounded data.
-			switch f.Type.Kind() {
-			case reflect.String, reflect.Bool, reflect.Int, reflect.Int64:
-			default:
-				t.Errorf("%s.%s: kind %s is not a bounded scalar", ty.Name(), f.Name, f.Type.Kind())
-			}
-		}
-	}
-}
-
 func payloadKeys(t *testing.T, v any) map[string]any {
 	t.Helper()
 	raw, err := MarshalPayload(v)
@@ -315,19 +244,6 @@ func assertExactKeys(t *testing.T, m map[string]any, want ...string) {
 			t.Fatalf("missing key %q in %v", k, m)
 		}
 	}
-}
-
-func TestLoopPrincipalPayloadShape(t *testing.T) {
-	m := payloadKeys(t, LoopPrincipalPayload{Subject: "s", ClientID: "c", Issuer: "i", Scopes: []string{}, TokenID: "t"})
-	assertExactKeys(t, m, "subject", "client_id", "issuer", "scopes", "token_id")
-	if _, ok := m["scopes"].([]any); !ok {
-		t.Fatalf("scopes = %#v, want JSON array", m["scopes"])
-	}
-}
-
-func TestToolIdentityMintedPayloadShape(t *testing.T) {
-	m := payloadKeys(t, ToolIdentityMintedPayload{Subject: "s", Audience: "a", Scope: "x y", LoopID: "l"})
-	assertExactKeys(t, m, "subject", "audience", "scope", "loop_id")
 }
 
 // TestSpawnStartPayloadJSONWithoutRole pins the wire bytes of a spawn.start
@@ -360,33 +276,6 @@ func TestSpawnStartPayloadRoleRoundTrip(t *testing.T) {
 	}
 	if out != in {
 		t.Fatalf("round trip = %+v, want %+v", out, in)
-	}
-}
-
-func TestLoopCancelledPayloadJSON(t *testing.T) {
-	b, err := json.Marshal(LoopCancelledPayload{Reason: "operator stop", RequestedBy: "alice", WasLive: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(b), `{"reason":"operator stop","requested_by":"alice","was_live":false}`; got != want {
-		t.Errorf("got %s, want %s", got, want)
-	}
-	b, err = json.Marshal(LoopCancelledPayload{Reason: "operator stop", RequestedBy: "alice", RequestSeq: 7})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(b), `"request_seq":7`) {
-		t.Errorf("missing request_seq: %s", b)
-	}
-}
-
-func TestLoopCancelRequestPayloadJSON(t *testing.T) {
-	b, err := json.Marshal(LoopCancelRequestPayload{Reason: "r", RequestedBy: "bob"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(b), `{"reason":"r","requested_by":"bob"}`; got != want {
-		t.Errorf("got %s, want %s", got, want)
 	}
 }
 

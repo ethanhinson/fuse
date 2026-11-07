@@ -92,8 +92,8 @@ func TestStartLoop_SandboxReleasedOnBuildAgentError(t *testing.T) {
 			}
 			return loopReg
 		},
-		BuildAgent: func(event.EventStore, *agent.AgentTree, string, *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
-			return nil, nil, "", errors.New("boom")
+		BuildAgent: func(event.EventStore, *agent.AgentTree, string, *tools.Registry) (*agent.Agent, error) {
+			return nil, errors.New("boom")
 		},
 		LoopTeardown: func(r *tools.Registry) {
 			_ = tools.ReleaseSandboxes(context.Background(), r)
@@ -132,11 +132,11 @@ func TestStartLoop_SandboxReleasedOnCompletion(t *testing.T) {
 	deps := Deps{
 		MaxConcurrent:   1,
 		NewToolRegistry: func() *tools.Registry { return loopReg },
-		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, _ string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, _ string, reg *tools.Registry) (*agent.Agent, error) {
 			if res := reg.Execute(context.Background(), "bash", `{"command":"true"}`); res.IsError {
 				t.Errorf("bash call failed: %s", res.Output)
 			}
-			return agent.New(&scriptedCompleter{}, execAll{reg}, nopRenderer{}, "cloud/x", "", 1, 0), nil, "cloud/x", nil
+			return agent.New(&scriptedCompleter{}, execAll{reg}, nopRenderer{}, "cloud/x", "", 1, 0), nil
 		},
 		LoopTeardown: func(r *tools.Registry) {
 			_ = tools.ReleaseSandboxes(context.Background(), r)

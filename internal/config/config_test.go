@@ -6,13 +6,10 @@ import (
 	"testing"
 )
 
-func TestObservabilitySignalsValidateIndependently(t *testing.T) {
+func TestObservabilityTracesValidate(t *testing.T) {
 	t.Run("disabled requires no backend", func(t *testing.T) {
 		c := Config{Observability: ObservabilityConfig{
-			Metrics:     MetricsObservabilityConfig{Path: "not-a-path", Access: "wrong"},
-			Traces:      TracesObservabilityConfig{Endpoint: "not-an-endpoint", Protocol: "wrong"},
-			Logging:     LoggingObservabilityConfig{Output: "wrong", Level: "wrong"},
-			Cardinality: CardinalityObservabilityConfig{Tenant: CardinalityDimensionConfig{Budget: -1, Pinned: []string{"x"}}},
+			Traces: TracesObservabilityConfig{Endpoint: "not-an-endpoint", Protocol: "wrong"},
 		}}
 		if err := c.Validate(); err != nil {
 			t.Fatal(err)
@@ -24,12 +21,9 @@ func TestObservabilitySignalsValidateIndependently(t *testing.T) {
 			t.Fatal("expected invalid enabled trace adapter")
 		}
 	})
-	t.Run("complete independent signals", func(t *testing.T) {
+	t.Run("complete trace adapter", func(t *testing.T) {
 		c := Config{Observability: ObservabilityConfig{
-			Metrics:     MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Bind: "127.0.0.1:9090", Access: "authenticated", HistogramBuckets: []float64{.01, .1, 1}},
-			Traces:      TracesObservabilityConfig{Enabled: true, Endpoint: "collector:4317", Protocol: "grpc", Headers: map[string]string{"authorization": "secret"}, QueueSize: 16, BatchSize: 8, ExportTimeout: "2s", BatchTimeout: "1s", SampleRatio: .25},
-			Logging:     LoggingObservabilityConfig{Enabled: true, Output: "file", File: "/tmp/fuse.log", Level: "info", MaxOverrideTTL: "15m"},
-			Cardinality: CardinalityObservabilityConfig{HashVersion: "sha256-64-v1", Salt: "deploy", Tenant: CardinalityDimensionConfig{Budget: 2, Pinned: []string{"acme"}, Catalog: []string{"acme", "globex"}}, Model: CardinalityDimensionConfig{Budget: 1, Catalog: []string{"m"}}, Tool: CardinalityDimensionConfig{Budget: 1, Catalog: []string{"read"}}},
+			Traces: TracesObservabilityConfig{Enabled: true, Endpoint: "collector:4317", Protocol: "grpc", Headers: map[string]string{"authorization": "secret"}, QueueSize: 16, BatchSize: 8, ExportTimeout: "2s", BatchTimeout: "1s", SampleRatio: .25},
 		}}
 		if err := c.Validate(); err != nil {
 			t.Fatal(err)
@@ -37,44 +31,14 @@ func TestObservabilitySignalsValidateIndependently(t *testing.T) {
 	})
 }
 
-func TestObservabilityRejectsInvalidAccessBatchAndLogging(t *testing.T) {
+func TestObservabilityRejectsInvalidBatch(t *testing.T) {
 	cases := []ObservabilityConfig{
-		{Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "open-ish"}},
 		{Traces: TracesObservabilityConfig{Enabled: true, Endpoint: "x", Protocol: "grpc", QueueSize: 1, BatchSize: 2}},
-		{Logging: LoggingObservabilityConfig{Enabled: true, Output: "file", Level: "info", MaxOverrideTTL: "1m"}},
 	}
 	for i, o := range cases {
 		if err := (Config{Observability: o}).Validate(); err == nil {
 			t.Errorf("case %d unexpectedly valid", i)
 		}
-	}
-}
-
-func TestObservabilityRejectsPartialOrChangedMetricLabelDeclarations(t *testing.T) {
-	c := Config{Observability: ObservabilityConfig{Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "authenticated", Labels: map[string][]string{"fuse_loop_active": {"tenant_id", "loop_id"}}}}}
-	if err := c.Validate(); err == nil {
-		t.Fatal("changed/partial label catalog accepted")
-	}
-}
-
-func TestObservabilityRejectsCardinalityBudgetWithoutOverflowSlot(t *testing.T) {
-	c := Config{Observability: ObservabilityConfig{Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "authenticated"}}}
-	if err := c.Validate(); err == nil {
-		t.Fatal("metrics accepted zero cardinality budgets")
-	}
-}
-
-func TestObservabilityRejectsPinsThatConsumeOverflowSlot(t *testing.T) {
-	c := Config{Observability: ObservabilityConfig{
-		Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "authenticated"},
-		Cardinality: CardinalityObservabilityConfig{
-			Tenant: CardinalityDimensionConfig{Budget: 1, Catalog: []string{"acme"}, Pinned: []string{"acme"}},
-			Model:  CardinalityDimensionConfig{Budget: 1},
-			Tool:   CardinalityDimensionConfig{Budget: 1},
-		},
-	}}
-	if err := c.Validate(); err == nil {
-		t.Fatal("metrics accepted pin that consumes the overflow slot")
 	}
 }
 

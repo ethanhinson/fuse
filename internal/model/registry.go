@@ -18,7 +18,7 @@ type ModelConfig struct {
 	SystemPrefix     string // prepended before the persona system prompt; for model-specific directives
 	// ReasoningEffort is sent as reasoning_effort on agent calls; empty sends nothing.
 	ReasoningEffort string
-	// Operator display metadata advertised by GetCapabilities; nothing else
+	// Operator display metadata shown by the model listings; nothing else
 	// reads it.
 	Label       string
 	Description string

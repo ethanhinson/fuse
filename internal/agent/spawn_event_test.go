@@ -301,8 +301,8 @@ func TestSpawnSpanCarriesRoleOnlyWhenSet(t *testing.T) {
 		role string
 		want []observe.Field
 	}{
-		{"role", "reviewer", []observe.Field{{Key: "worker", Value: ""}, {Key: "role", Value: "reviewer"}}},
-		{"no role", "", []observe.Field{{Key: "worker", Value: ""}}},
+		{"role", "reviewer", []observe.Field{{Key: "role", Value: "reviewer"}}},
+		{"no role", "", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tree := NewAgentTree("root", "m")

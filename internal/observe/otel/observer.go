@@ -3,7 +3,6 @@ package otel
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,36 +29,6 @@ func New(provider trace.TracerProvider) *Observer {
 // TraceCarrier returns the portable, validated subset of the active span context.
 func (o *Observer) TraceCarrier(ctx context.Context) *event.TraceCarrier {
 	return CarrierFromContext(ctx)
-}
-
-// StartFromCarrier continues immediately-consumed work, while delayed/replayed
-// work receives a new root trace with a causal link to the durable producer.
-//
-// Delayed work is a NEW ROOT whether or not a producer carrier survives: with one it
-// is additionally linked, without one it is simply unlinked. An unrecoverable carrier
-// must never demote delayed work to a CHILD of whatever span the caller happens to sit
-// in — that would attach a long-lived unit of work (an interactive loop's turn, whose
-// whole purpose is to be independently exportable) to a transient request span:
-// authoritative-looking, unrelated, and different on every call. Immediate work is
-// unaffected — with nothing to restore it continues the caller's context as before.
-func (o *Observer) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
-	parent, ok := ContextFromCarrier(ctx, c, false)
-	if !ok {
-		if !delayed {
-			return o.Start(ctx, d)
-		}
-		if o == nil || o.tracer == nil {
-			return ctx, observe.NoopHandle{}
-		}
-		ctx, span := o.tracer.Start(ctx, "fuse."+string(d.Kind)+"."+d.Name, trace.WithNewRoot(), trace.WithAttributes(fields(d.Fields)...))
-		return ctx, &handle{span: span}
-	}
-	if !delayed {
-		return o.Start(parent, d)
-	}
-	linked := trace.SpanContextFromContext(parent)
-	ctx, span := o.tracer.Start(ctx, "fuse."+string(d.Kind)+"."+d.Name, trace.WithNewRoot(), trace.WithLinks(trace.Link{SpanContext: linked}), trace.WithAttributes(fields(d.Fields)...))
-	return ctx, &handle{span: span}
 }
 
 func (o *Observer) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
@@ -105,19 +74,6 @@ func fields(fs []observe.Field) []attribute.KeyValue {
 		out = append(out, attribute.String(f.Key, v))
 	}
 	return out
-}
-
-func OutcomeFromError(ctx context.Context, err error) observe.Outcome {
-	if err == nil {
-		return observe.OutcomeSuccess
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return observe.OutcomeTimeout
-	}
-	if errors.Is(err, context.Canceled) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) {
-		return observe.OutcomeCanceled
-	}
-	return observe.OutcomeError
 }
 
 // BatchConfig keeps exporter backpressure finite. Zero values use conservative bounds.

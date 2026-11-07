@@ -11,28 +11,27 @@ import (
 	"github.com/ethanhinson/fuse/internal/ratelimit"
 )
 
-// The change 0036 observability surface renders the scheduler's per-pool and
+// The change 0036 observability surface renders the scheduler's pool and
 // rate-gate counters into short, machine-built strings. These tests pin the
 // format (the spec shape, omitting unset axes) and prove the strings reach the
 // status bar and the agents overlay.
 
 func TestPoolSummaryLineSpecShapeAndOmitsUnsetAxes(t *testing.T) {
-	// Full shape from the spec: `research 3/5 slots · 2 queued · 310k/500k tokens`.
+	// Full shape: `session 3/5 slots · 2 queued · 310k/500k tokens`.
 	got := poolSummaryLine(agent.PoolSnapshot{
-		Workflow: "research", SlotsInUse: 3, SlotTotal: 5, Queued: 2,
+		SlotsInUse: 3, SlotTotal: 5, Queued: 2,
 		TokenSpend: 310_000, TokenQuota: 500_000,
 	})
-	if want := "research 3/5 slots · 2 queued · 310k/500k tokens"; got != want {
+	if want := "session 3/5 slots · 2 queued · 310k/500k tokens"; got != want {
 		t.Errorf("full pool line = %q, want %q", got, want)
 	}
 
 	// Unset axes are omitted: no slot cap, no queue, no token quota ⇒ nothing.
-	if got := poolSummaryLine(agent.PoolSnapshot{Workflow: "research", SlotsInUse: 1}); got != "" {
+	if got := poolSummaryLine(agent.PoolSnapshot{SlotsInUse: 1}); got != "" {
 		t.Errorf("all-unset pool line = %q, want empty", got)
 	}
 
-	// Only slots engaged (no queue, no token quota) ⇒ just the slots segment; the
-	// implicit pool labels as "session".
+	// Only slots engaged (no queue, no token quota) ⇒ just the slots segment.
 	if got := poolSummaryLine(agent.PoolSnapshot{SlotsInUse: 2, SlotTotal: 4}); got != "session 2/4 slots" {
 		t.Errorf("slots-only session line = %q, want %q", got, "session 2/4 slots")
 	}
@@ -53,61 +52,50 @@ func TestRateGateLineOmitsUnlimitedAxis(t *testing.T) {
 
 func TestSchedulerSummaryLinesOrderingAndRateGate(t *testing.T) {
 	snap := agent.SchedulerSnapshot{
-		Pools: []agent.PoolSnapshot{
-			// Implicit pool listed first in the snapshot but must sort last.
-			{Workflow: "", SlotsInUse: 1, SlotTotal: 4},
-			{Workflow: "research", SlotsInUse: 3, SlotTotal: 5, TokenSpend: 10, TokenQuota: 100},
-		},
+		Pools: []agent.PoolSnapshot{{SlotsInUse: 1, SlotTotal: 4}},
 	}
 	util := []ratelimit.ProviderUtilization{{Provider: "", RPMCap: 60, RPMRemaining: 60}}
 	lines := schedulerSummaryLines(snap, util)
-	if len(lines) != 3 {
-		t.Fatalf("summary lines = %#v, want 3", lines)
+	if len(lines) != 2 {
+		t.Fatalf("summary lines = %#v, want 2", lines)
 	}
-	if !strings.HasPrefix(lines[0], "research ") {
-		t.Errorf("first line = %q, want the research pool first", lines[0])
+	if !strings.HasPrefix(lines[0], "session ") {
+		t.Errorf("first line = %q, want the session pool first", lines[0])
 	}
-	if !strings.HasPrefix(lines[1], "session ") {
-		t.Errorf("second line = %q, want the session pool second", lines[1])
-	}
-	if !strings.HasPrefix(lines[2], "global ") {
-		t.Errorf("third line = %q, want the rate-gate line last", lines[2])
+	if !strings.HasPrefix(lines[1], "global ") {
+		t.Errorf("second line = %q, want the rate-gate line last", lines[1])
 	}
 }
 
-// TestSchedulerStatusSegmentPicksBusiest asserts the status-bar segment surfaces
-// the BUSIEST engaged pool (max SlotsInUse, tie → more Queued, then name), not
-// merely the alphabetically-first (N-3). The busiest pool here sorts LAST by
-// name, so a name-first pick would return the wrong pool.
+// TestSchedulerStatusSegmentPicksBusiest asserts the status-bar segment surfaces the
+// busiest engaged pool (max SlotsInUse, tie → more Queued).
 func TestSchedulerStatusSegmentPicksBusiest(t *testing.T) {
-	// "alpha" is alphabetically first but idle-ish (1 slot); "zeta" is busiest.
 	snap := agent.SchedulerSnapshot{
 		Pools: []agent.PoolSnapshot{
-			{Workflow: "alpha", SlotsInUse: 1, SlotTotal: 5},
-			{Workflow: "zeta", SlotsInUse: 4, SlotTotal: 5},
+			{SlotsInUse: 1, SlotTotal: 5},
+			{SlotsInUse: 4, SlotTotal: 5},
 		},
 	}
-	if got := schedulerStatusSegment(snap); !strings.HasPrefix(got, "zeta ") {
-		t.Errorf("segment = %q, want the busiest pool (zeta), not the alphabetically-first", got)
+	if got := schedulerStatusSegment(snap); got != "session 4/5 slots" {
+		t.Errorf("segment = %q, want the busiest pool", got)
 	}
 
 	// SlotsInUse tie ⇒ more Queued wins.
 	tie := agent.SchedulerSnapshot{
 		Pools: []agent.PoolSnapshot{
-			{Workflow: "alpha", SlotsInUse: 3, SlotTotal: 5, Queued: 1},
-			{Workflow: "beta", SlotsInUse: 3, SlotTotal: 5, Queued: 5},
+			{SlotsInUse: 3, SlotTotal: 5, Queued: 1},
+			{SlotsInUse: 3, SlotTotal: 5, Queued: 5},
 		},
 	}
-	if got := schedulerStatusSegment(tie); !strings.HasPrefix(got, "beta ") {
-		t.Errorf("segment = %q, want the more-queued pool (beta) on a slots tie", got)
+	if got := schedulerStatusSegment(tie); got != "session 3/5 slots · 5 queued" {
+		t.Errorf("segment = %q, want the more-queued pool on a slots tie", got)
 	}
 
-	// A pool with no renderable axis is not "engaged" and must be skipped even if
-	// it sorts first; the engaged session pool is surfaced instead.
+	// A pool with no renderable axis is not "engaged" and must be skipped.
 	skip := agent.SchedulerSnapshot{
 		Pools: []agent.PoolSnapshot{
-			{Workflow: "aaa", SlotsInUse: 9}, // SlotTotal 0 ⇒ no renderable axis
-			{Workflow: "", SlotsInUse: 2, SlotTotal: 4},
+			{SlotsInUse: 9}, // SlotTotal 0 ⇒ no renderable axis
+			{SlotsInUse: 2, SlotTotal: 4},
 		},
 	}
 	if got := schedulerStatusSegment(skip); got != "session 2/4 slots" {

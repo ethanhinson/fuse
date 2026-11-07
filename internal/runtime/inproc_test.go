@@ -14,16 +14,9 @@ import (
 )
 
 type observedOperation struct {
-	kind       observe.OperationKind
-	name       string
-	fields     []observe.Field
-	viaCarrier bool
-	hadCarrier bool
-	delayed    bool
-	// carrier is the traceparent of the carrier the operation was started from, so a
-	// test can tell WHICH durable context an operation linked to — not merely that one
-	// was present.
-	carrier string
+	kind   observe.OperationKind
+	name   string
+	fields []observe.Field
 }
 
 // recordedEnd captures a single Handle.End call against a started operation.
@@ -34,7 +27,7 @@ type recordedEnd struct {
 }
 
 // recordingHandle is a recording Handle returned to callers of
-// recordingObserver.Start / StartFromCarrier. Ends are recorded back onto the
+// recordingObserver.Start. Ends are recorded back onto the
 // owning recordingObserver under its mutex, since the handle is shared with
 // the run goroutine (learnings: mutex-test-double-concurrent-provider — lock
 // both sides).
@@ -62,42 +55,6 @@ func (o *recordingObserver) Start(ctx context.Context, d observe.Descriptor) (co
 	return ctx, recordingHandle{owner: o, name: d.Name}
 }
 
-// StartFromCarrier satisfies observe.CarrierStarter so recordingObserver
-// exercises the carrier/delayed branch of observe.StartFromCarrier instead of
-// silently falling back to Start.
-func (o *recordingObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
-	traceParent := ""
-	if c != nil {
-		traceParent = c.TraceParent
-	}
-	o.mu.Lock()
-	o.ops = append(o.ops, observedOperation{
-		kind:       d.Kind,
-		name:       d.Name,
-		fields:     d.Fields,
-		viaCarrier: true,
-		hadCarrier: c != nil,
-		delayed:    delayed,
-		carrier:    traceParent,
-	})
-	o.mu.Unlock()
-	return ctx, recordingHandle{owner: o, name: d.Name}
-}
-
-// testCarrier is the fixed, W3C-valid durable trace context recordingObserver
-// hands out. A real (otel) observer derives one per active span; the recorder only
-// needs it present and valid, so turn spans exercise the carrier branch and emitted
-// events round-trip through the durable store's carrier validation.
-var testCarrier = event.TraceCarrier{TraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
-
-// TraceCarrier satisfies observe.TraceCarrierProvider so the runtime's capability
-// probe (observe.TraceCarrier) yields a non-nil durable carrier, as the otel
-// observer does in production.
-func (o *recordingObserver) TraceCarrier(context.Context) *event.TraceCarrier {
-	c := testCarrier
-	return &c
-}
-
 func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -109,8 +66,7 @@ func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
 	return false
 }
 
-// opsNamed returns every recorded operation (via Start or StartFromCarrier)
-// with the given name, in recorded order.
+// opsNamed returns every recorded operation with the given name, in recorded order.
 func (o *recordingObserver) opsNamed(name string) []observedOperation {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -199,8 +155,8 @@ func TestStartLoopRunsAndEmits(t *testing.T) {
 	rt := New(Deps{
 		BaseDir:       baseDir,
 		MaxConcurrent: 1,
-		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
-			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, error) {
+			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil
 		},
 	})
 
@@ -216,7 +172,7 @@ func TestStartLoopRunsAndEmits(t *testing.T) {
 	}
 
 	// The per-loop fsstore should carry a turn.start then turn.end via Replay(0).
-	// Open the store independently under baseDir/<rootID> (Attach is Task 3).
+	// Open the store independently under baseDir/<rootID>.
 	store, err := fsstore.NewFSEventStore(baseDir, h.ID())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -231,35 +187,5 @@ func TestStartLoopRunsAndEmits(t *testing.T) {
 	}
 	if !hasKind(evs, event.KindTurnEnd) {
 		t.Errorf("no turn.end in %v", evs)
-	}
-}
-
-func TestDurableSinkObservesStoreAndPubSubOperations(t *testing.T) {
-	store := fsstore.NewDurableFSStore(t.TempDir())
-	observer := &recordingObserver{}
-	sink := &durableSink{
-		store:    store,
-		key:      event.StreamKey{Tenant: "acme", Loop: "loop-a"},
-		observer: observer,
-	}
-	if err := sink.Append(event.Event{Kind: event.KindTurnStart}); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
-	ch, cancel := sink.Subscribe()
-	cancel()
-	if ch == nil {
-		t.Fatal("Subscribe returned nil channel")
-	}
-	if _, err := sink.Replay(0); err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	for _, want := range []observedOperation{
-		{kind: observe.OperationStore, name: "append"},
-		{kind: observe.OperationPubSub, name: "subscribe"},
-		{kind: observe.OperationStore, name: "replay"},
-	} {
-		if !observer.saw(want.kind, want.name) {
-			t.Errorf("missing observation %s.%s", want.kind, want.name)
-		}
 	}
 }
