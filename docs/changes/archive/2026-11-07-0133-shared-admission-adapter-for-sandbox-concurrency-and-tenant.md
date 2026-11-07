@@ -2,12 +2,12 @@
 id: 133
 slug: 'shared-admission-adapter-for-sandbox-concurrency-and-tenant'
 title: 'Shared admission adapter for sandbox concurrency and tenant start rate'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [77, 103, 106, 107]
@@ -44,3 +44,7 @@ An `Admitter` seam for counted, time-windowed admission with a local implementat
 ## Out of scope
 
 Model-call throughput rate limiting (`internal/ratelimit`, provider RPM/TPM — per-process by design, documented); priority/fairness changes; removing the local implementation.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0133 — Shared admission adapter for sandbox concurrency and tenant start rate](../../changes/active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md)**
+> ↩ **[Change 0133 — Shared admission adapter for sandbox concurrency and tenant start rate](../../changes/archive/2026-11-07-0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md)**
 <!-- docket:backlink:end -->
 
 # Shared admission adapter for sandbox concurrency and tenant start rate
