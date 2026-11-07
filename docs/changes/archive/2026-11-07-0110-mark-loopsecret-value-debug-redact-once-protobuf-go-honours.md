@@ -2,12 +2,12 @@
 id: 110
 slug: 'mark-loopsecret-value-debug-redact-once-protobuf-go-honours'
 title: 'Mark LoopSecret.value debug_redact once protobuf-go honours it'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [102]
@@ -42,3 +42,7 @@ protobuf-go v1.36.12 prints LoopSecret values through String, prototext and prot
 ## Out of scope
 
 - Custom redaction in fuse.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
