@@ -1,13 +1,13 @@
 ---
 id: 125
 slug: 'stop-the-current-turn-of-an-interactive-loop-without-ending'
-title: 'Stop the current turn of an interactive loop without ending it'
+title: 'Stop the current turn in the shell without ending the session'
 status: 'proposed'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [117]
@@ -32,16 +32,14 @@ reconciled: false
 
 ## Why
 
-Callers can steer a running turn (`Send` with `interrupt`, which cancels the in-flight model call or tool batch and starts a new turn with the steer text) or cancel the whole loop (`CancelLoop`). They cannot stop the current turn and leave the interactive loop parked, waiting for the next message. A user-facing Stop therefore has to end the whole session.
+In `fuse shell`, `/interrupt` requires a message: it cancels the running turn and immediately starts a new one. There is no way to just stop the agent and get the prompt back. Confirm the current key handling before building, since this was rewritten after the server tier was removed in PR #149.
 
 ## What changes
 
-- Add a way to stop the current turn and park the loop: either an interrupt variant with no follow-up message, or a `CancelTurn` RPC.
-- It cancels the in-flight model call and tools, then emits `loop.parked` with a `stopped` reason.
-- The next `Send` starts a normal turn.
-- Scope: same owner and tenant rules as Send.
+- Add a stop key or command in the shell that cancels the in-flight model call and tools and returns to the prompt.
+- The conversation is kept, and the next prompt starts a normal turn.
 - Tests cover a stop during a model call and during a tool call.
 
 ## Out of scope
 
-Changing CancelLoop or the steering semantics.
+Headless runs and steering semantics.
