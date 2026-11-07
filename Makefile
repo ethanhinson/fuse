@@ -1,4 +1,4 @@
-.PHONY: build install test test-race lint test-integration
+.PHONY: build install test test-race lint test-integration e2e
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -23,6 +23,11 @@ test-race:
 
 lint:
 	go vet ./...
+
+# Black-box suite: execs the real binary against a scripted fake gateway. Set
+# E2E_SHOW_DEFECTS=1 to run the tests that pin known product defects.
+e2e:
+	go test ./internal/e2e/ -count=1
 
 # Integration harness (change 0008): brings up the Docker Compose stack
 # (mcp-everything + mock-oauth2), runs the //go:build integration suite in
