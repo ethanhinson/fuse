@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +49,10 @@ type fakeRuntime struct {
 	unsub     func()
 	observeFn func(ctx context.Context, tn event.TenantID, loopID string) (<-chan event.Event, func(), error)
 	attachFn  func(ctx context.Context, tn event.TenantID, loopID string, from event.Seq) ([]event.Event, error)
+
+	// CancelReader hooks.
+	isCancelled    bool
+	isCancelledErr error
 }
 
 func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
@@ -96,6 +101,12 @@ func (f *fakeRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID 
 		return f.attachFn(ctx, tenant, loopID, from)
 	}
 	return nil, nil
+}
+func (f *fakeRuntime) IsCancelled(ctx context.Context, tenant event.TenantID, loopID string) (bool, error) {
+	if f.isCancelledErr != nil {
+		return false, f.isCancelledErr
+	}
+	return f.isCancelled, nil
 }
 
 type fakeHandle struct{ id string }
@@ -345,5 +356,26 @@ func TestSendSourceValidatedAndThreaded(t *testing.T) {
 	_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "x", Source: "root"}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("unknown source code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
+// TestSendFinishedButCancelledOnOtherReplica proves that when another replica cancels
+// a loop and this replica's Send sees ErrLoopFinished with an unresumable loop, the
+// handler consults CancelReader.IsCancelled and maps the error to "loop cancelled".
+func TestSendFinishedButCancelledOnOtherReplica(t *testing.T) {
+	rt := &fakeRuntime{
+		sendErrAfterResume: runtime.ErrLoopFinished,
+		resumeErr:          errors.New("not resumable"),
+		isCancelled:        true,
+	}
+	client := newTestServer(t, rt)
+	_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{
+		LoopId: "loop-1", Input: "hello?", Tenant: "acme",
+	}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("Send err code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+	if s := err.Error(); !strings.Contains(s, "loop cancelled") {
+		t.Fatalf("Send err message = %q, want \"loop cancelled\"", s)
 	}
 }

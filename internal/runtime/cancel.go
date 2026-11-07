@@ -89,8 +89,11 @@ var _ CancelReader = (*inProcRuntime)(nil)
 // IsCancelled reports whether the loop is sealed by a cancel. See CancelReader.
 // Unlike a resume it never answers an unanswered loop.cancel.request: it only reads.
 func (r *inProcRuntime) IsCancelled(ctx context.Context, tenant event.TenantID, loopID string) (bool, error) {
-	if lp := r.loopCache(tenant, loopID); lp != nil {
-		return r.isCancelled(lp), nil
+	// A cached loop answers yes from memory, but no only proves this replica has not
+	// seen a cancel: another replica can seal a loop this one still holds as finished,
+	// so a no falls through to the durable stream.
+	if lp := r.loopCache(tenant, loopID); lp != nil && r.isCancelled(lp) {
+		return true, nil
 	}
 	if r.deps.DurableStore == nil {
 		return false, nil
