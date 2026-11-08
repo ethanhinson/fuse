@@ -84,11 +84,22 @@ func protectBudget(window int, recovery bool) int {
 // stays in history, so the model still sees WHAT it did — just not the body.
 const prunedStub = "[old tool result cleared to free context — re-run the tool if needed]"
 
+// historyMessage is resp as it enters history. Its reasoning is kept only when
+// the agent sends reasoning back, so history holds nothing it will not send and
+// messagesSize can count reasoning unconditionally.
+func (a *Agent) historyMessage(resp model.CompletionResp) model.Message {
+	m := resp.AsMessage()
+	if !a.ReplayReasoning {
+		m.Reasoning, m.ReasoningField = "", ""
+	}
+	return m
+}
+
 // messagesSize estimates the payload of msgs in bytes.
 func messagesSize(msgs []model.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += len(m.Content)
+		total += len(m.Content) + len(m.Reasoning)
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Arguments)
 		}
@@ -563,6 +574,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			Tools:           schemas,
 			MaxTokens:       clampOutputCap(outputCap, window, estimate),
 			ReasoningEffort: a.ReasoningEffort,
+			ReplayReasoning: a.ReplayReasoning,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
@@ -648,7 +660,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			err := fmt.Errorf("%w: %d output tokens used, no higher cap is allowed; raise max_tokens_ceiling for this model or narrow the task", ErrOutputTruncated, req.MaxTokens)
 			if keepPartial {
 				a.renderer.Assistant(resp.Content)
-				messages = append(messages, resp.AsMessage())
+				messages = append(messages, a.historyMessage(resp))
 			}
 			a.renderer.Errorf("%v", err)
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
@@ -685,7 +697,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			continue
 		}
 		emptyReplies = 0
-		messages = append(messages, resp.AsMessage())
+		messages = append(messages, a.historyMessage(resp))
 
 		if len(resp.ToolCalls) == 0 {
 			// turn.end (change 0043): the no-tool-calls terminal path.

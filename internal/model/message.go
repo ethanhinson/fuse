@@ -11,6 +11,13 @@ type Message struct {
 	ToolCalls  []ToolCall
 	ToolCallID string // set when Role == "tool"
 	Name       string // tool name, for tool-result messages
+	// Reasoning is an assistant reply's reasoning text, kept only when the model
+	// is configured to have it sent back (CompletionReq.ReplayReasoning).
+	// ReasoningField is the wire field it arrived in (reasoning_content,
+	// reasoning or reasoning_text), so it goes back in the field the provider
+	// uses; empty means reasoning_content.
+	Reasoning      string
+	ReasoningField string
 }
 
 // ToolCall is a function call requested by the model. Arguments is the raw
@@ -38,6 +45,12 @@ type CompletionReq struct {
 	ToolChoice string // "auto" (default), "none" (force text), "required"
 	// ReasoningEffort is sent as reasoning_effort when set.
 	ReasoningEffort string
+	// ReplayReasoning sends each assistant message's Reasoning back in its
+	// native field. Models whose chat template expects their earlier reasoning
+	// inside a tool-call loop (DeepSeek, Kimi and others) otherwise start every
+	// call without it. Off sends no reasoning. The CLI sets it unless the model's
+	// config turns it off.
+	ReplayReasoning bool
 }
 
 // CompletionResp is the assistant's reply.
@@ -49,6 +62,10 @@ type CompletionResp struct {
 	OutputTokens int // completion tokens reported by the gateway
 	// ReasoningTokens is how many of OutputTokens went to reasoning, 0 when unreported.
 	ReasoningTokens int
+	// Reasoning is the reply's reasoning text where the gateway returned it, and
+	// ReasoningField the wire field it came in.
+	Reasoning      string
+	ReasoningField string
 	// FinishReason is the gateway's choice-level finish_reason ("stop",
 	// "length", "tool_calls", ...). "length" means the reply was cut at
 	// max_tokens: whatever it says is incomplete, and a missing tool call is
@@ -79,7 +96,7 @@ func (r CompletionResp) Truncated(limit int) bool {
 // reject the whole request otherwise.
 func (r CompletionResp) AsMessage() Message {
 	if len(r.ToolCalls) == 0 {
-		return Message{Role: "assistant", Content: r.Content}
+		return Message{Role: "assistant", Content: r.Content, Reasoning: r.Reasoning, ReasoningField: r.ReasoningField}
 	}
 	calls := make([]ToolCall, len(r.ToolCalls))
 	for i, tc := range r.ToolCalls {
@@ -89,5 +106,5 @@ func (r CompletionResp) AsMessage() Message {
 		}
 		calls[i] = tc
 	}
-	return Message{Role: "assistant", Content: r.Content, ToolCalls: calls}
+	return Message{Role: "assistant", Content: r.Content, ToolCalls: calls, Reasoning: r.Reasoning, ReasoningField: r.ReasoningField}
 }

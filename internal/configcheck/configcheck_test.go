@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/model"
 )
 
 func TestRegistryOverlaysConfigEntries(t *testing.T) {
@@ -102,5 +103,30 @@ func TestProblemsFlagsOverlongInstructions(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected a problem at instructions")
+	}
+}
+
+func TestRegistryReplaysReasoningUnlessTurnedOff(t *testing.T) {
+	off, on := false, true
+	cfg := config.Default()
+	cfg.Models.Entries = map[string]config.ModelConfig{
+		"unset": {ID: "cloud/a"},
+		"off":   {ID: "cloud/b", ReplayReasoning: &off},
+		"on":    {ID: "cloud/c", ReplayReasoning: &on},
+	}
+	reg := Registry(cfg)
+	for alias, wantDrop := range map[string]bool{"unset": false, "off": true, "on": false} {
+		mc, err := reg.Resolve(alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mc.DropReasoning != wantDrop {
+			t.Errorf("%s: DropReasoning = %v, want %v", alias, mc.DropReasoning, wantDrop)
+		}
+	}
+	for _, nm := range model.DefaultRegistry().Entries() {
+		if nm.Config.DropReasoning {
+			t.Errorf("built-in %s must replay reasoning", nm.Alias)
+		}
 	}
 }

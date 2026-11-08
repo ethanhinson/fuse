@@ -18,6 +18,10 @@ type ModelConfig struct {
 	SystemPrefix     string // prepended before the persona system prompt; for model-specific directives
 	// ReasoningEffort is sent as reasoning_effort on agent calls; empty sends nothing.
 	ReasoningEffort string
+	// DropReasoning stops the model's earlier reasoning being sent back on agent
+	// calls (config replay_reasoning: false). Its zero value replays, so built-in
+	// entries replay.
+	DropReasoning bool
 	// Operator display metadata shown by the model listings; nothing else
 	// reads it.
 	Label       string

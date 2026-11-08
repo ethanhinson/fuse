@@ -36,22 +36,36 @@ def main():
     p.add_argument("--jobs", default=str(HERE / "jobs"))
     p.add_argument("--name", required=True)
     p.add_argument("--gateway", default="http://host.docker.internal:4000/v1")
+    p.add_argument("--fuse-option", action="append", default=[], metavar="KEY=VALUE",
+                   help="model setting for the fuse arm, e.g. replay_reasoning=false (repeatable)")
+    p.add_argument("--exclude-task", action="append", default=[], metavar="GLOB",
+                   help="leave out matching tasks on every arm (repeatable)")
     args = p.parse_args()
 
+    opts = []
+    for o in args.fuse_option:
+        k, sep, v = o.partition("=")
+        if not sep or not k.replace("_", "").isalnum() or "\n" in v or ";" in v:
+            sys.exit(f"--fuse-option wants KEY=VALUE, got {o!r}")
+        opts.append(f"{k}: {v}")
     key = os.environ["LLM_GATEWAY_KEY"]
     bin_dir = Path(args.jobs).resolve() / args.name / "bin"
     build(bin_dir)
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     start = credit()
-    print(f"{args.name}: fuse {sha}, credit {start}, budget {args.budget}", flush=True)
+    print(f"{args.name}: fuse {sha}, credit {start}, budget {args.budget}, fuse options {opts}", flush=True)
     common = ["-d", args.dataset, "-o", args.jobs, "-m", "openai/" + args.model, "-y", "--quiet",
               "-k", str(args.attempts), "-n", str(args.concurrency)]
+    for g in args.exclude_task:
+        common += ["-x", g]
     for arm in args.arms.split(","):
         job = f"{args.name}-{arm}"
         env = {**os.environ, "PYTHONPATH": str(HERE), "FUSE_BENCH_BIN": str(bin_dir), "OPENAI_API_KEY": key}
         if arm == "fuse":
             cmd = [args.harbor, "run", "-a", "fuse_agent:FuseAgent", "--skip-credential-checks",
                    "--ae", "FUSE_BENCH_GATEWAY=" + args.gateway, "--ae", "FUSE_BENCH_KEY=" + key]
+            if opts:
+                cmd += ["--ae", "FUSE_BENCH_MODEL_OPTS=" + ";".join(opts)]
         else:
             cmd = [args.harbor, "run", "-a", arm, "--base-url", args.gateway, "--api-key-name", "OPENAI_API_KEY"]
             if arm == "pi":  # pi needs the format named; opencode breaks if it is.
