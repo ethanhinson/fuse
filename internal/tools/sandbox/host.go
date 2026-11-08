@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/procgroup"
+	"syscall"
 )
 
 // HandlerHost is the bounded handler identifier for the host substrate. It is a
@@ -195,6 +196,9 @@ func (r *hostRunner) Exec(ctx context.Context, cmd string, workingDir string) (O
 		// The command ran and reported a status (or was signalled, which
 		// ExitCode reports as -1). That is a result, not a substrate failure.
 		out.ExitCode = exitErr.ExitCode()
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			out.Signal = ws.Signal()
+		}
 		if out.ExitCode == 0 {
 			// Signalled-but-zero cannot normally happen; refuse to report it
 			// as success regardless.

@@ -24,6 +24,11 @@ func (readTool) Name() string { return "read_file" }
 // continuation footer teaches the model to page instead.
 const readDefaultWindow = 1000
 
+// readWindowBytes bounds a windowed read (no end_line) in bytes as well as
+// lines. It sits under the 20KB spill budget, so a windowed read is never cut
+// middle-out: it ends at a line boundary with a footer saying where to go on.
+const readWindowBytes = 16 << 10
+
 const (
 	readChunkBytes = 64 << 10
 	// readMaxOutputBytes caps what one read returns, whatever the range. Lines
@@ -35,7 +40,7 @@ const (
 
 func (readTool) Description() string {
 	return "Read a file's contents with 1-based inclusive line ranges. " +
-		"Without a range, the first 1000 lines are returned; the footer says how to continue. " +
+		"Without end_line, up to 1000 lines (16 KB) from start_line (default 1) are returned; the footer says how to continue. " +
 		"Prefer grep to locate, then read just the ranges you need. " +
 		"path may also be an art:// artifact ref (e.g. from a spilled-output marker)."
 }
@@ -135,19 +140,64 @@ func renderRead(ctx context.Context, path string, r io.Reader, size int64, a rea
 		return Result{IsError: true, Output: fmt.Sprintf(
 			"invalid range: end_line %d is before start_line %d", a.EndLine, a.StartLine)}
 	}
-	// Lines start..end are kept. end == 0 means through the end of the file.
+	// A read without end_line, with or without start_line, is windowed: at most
+	// readDefaultWindow lines and readWindowBytes from start, cut at a line
+	// boundary, with a footer saying where to continue. Only an explicit end_line
+	// asks for more. An open-ended start_line read used to run to the end of the
+	// file, and anything over the spill budget then came back cut in the middle:
+	// 8KB from start_line, 8KB from the file's end, nothing between.
+	windowed := a.EndLine == 0
 	end := a.EndLine
-	unranged := a.StartLine == 0 && a.EndLine == 0
-	if unranged {
-		// Unranged read of a large file: return the first window with an
-		// explicit continuation affordance instead of the whole file.
-		end = readDefaultWindow
+	limit := readMaxOutputBytes
+	if windowed {
+		end = start + readDefaultWindow - 1
+		limit = readWindowBytes
 	}
 
-	var kept bytes.Buffer
-	line := 1 // the line being read; as with strings.Split, "a\n" has lines "a" and ""
+	var kept, cur bytes.Buffer
+	line := 1  // the line being read; as with strings.Split, "a\n" has lines "a" and ""
+	shown := 0 // last line kept whole
+	keeping := true
 	var scanned int64
-	capped, overScan := false, false
+	capped, lineCut, overScan := false, false, false
+
+	// finish settles the line just read into kept. It reports false when the read
+	// should stop: an explicit range hit the hard cap, or a window's first line
+	// alone is over the window.
+	over := false // cur holds only part of this line
+	finish := func() bool {
+		defer func() { cur.Reset(); over = false }()
+		if !keeping || line < start || line > end {
+			return true
+		}
+		sep := 0
+		if shown > 0 {
+			sep = 1
+		}
+		switch {
+		case !over && kept.Len()+sep+cur.Len() <= limit:
+			if sep == 1 {
+				kept.WriteByte('\n')
+			}
+			kept.Write(cur.Bytes())
+			shown = line
+		case !windowed:
+			if sep == 1 {
+				kept.WriteByte('\n')
+			}
+			kept.Write(cur.Bytes())
+			capped = true
+			return false
+		case shown == 0:
+			kept.Write(cur.Bytes())
+			shown, lineCut = line, true
+			return false
+		default:
+			keeping = false
+		}
+		return true
+	}
+
 	chunkBuf := make([]byte, readChunkBytes)
 scan:
 	for {
@@ -164,36 +214,48 @@ scan:
 			if nl >= 0 {
 				seg = chunk[:nl]
 			}
-			if line >= start && (end == 0 || line <= end) {
-				if room := readMaxOutputBytes - kept.Len(); len(seg) >= room {
-					kept.Write(seg[:room])
-					capped = true
-					break scan
+			if keeping && line >= start && line <= end && !over {
+				room := limit - kept.Len() - cur.Len()
+				if shown > 0 {
+					room--
 				}
-				kept.Write(seg)
+				if len(seg) > room {
+					cur.Write(seg[:max(room, 0)])
+					over = true
+					if !windowed || shown == 0 {
+						// Nothing after this point can be shown: settle now
+						// rather than walk the rest of a possibly endless line.
+						finish()
+						break scan
+					}
+				} else {
+					cur.Write(seg)
+				}
 			}
 			if nl < 0 {
 				break
 			}
-			// A newline separates two kept lines, so it is kept only if the next is.
-			if line >= start && (end == 0 || line < end) {
-				kept.WriteByte('\n')
+			if !finish() {
+				break scan
 			}
 			line++
 			chunk = chunk[nl+1:]
-			if !unranged && end != 0 && line > end {
+			if !windowed && line > end {
 				break scan
 			}
 		}
 		if rerr == io.EOF {
+			if !finish() {
+				break scan
+			}
 			break
 		}
 		if rerr != nil {
 			return Result{IsError: true, Output: rerr.Error()}
 		}
-		// An unranged read scans on only to report a total. That number is not worth
-		// walking a huge file or an endless device for.
-		if unranged && scanned >= readMaxScanBytes {
+		// Past the window the scan goes on only to report a total. That number is
+		// not worth walking a huge file or an endless device for.
+		if windowed && (!keeping || line > end) && scanned >= readMaxScanBytes {
 			overScan = true
 			break
 		}
@@ -207,12 +269,12 @@ scan:
 	switch {
 	case capped:
 		out += fmt.Sprintf("\n(Output stopped at the %d MiB limit, in line %d. Use start_line and end_line to read a smaller range.)", readMaxOutputBytes>>20, line)
+	case lineCut:
+		out += fmt.Sprintf("\n(Line %d is longer than %d KB; only its start is shown. Use bash (cut -c, fold) for the rest of it, or start_line and end_line for other lines.)", shown, readWindowBytes>>10)
 	case overScan:
-		// The output cap is lower than the scan limit, so reaching the limit means
-		// the whole window fitted.
-		out += fmt.Sprintf("\n(Showing lines 1-%d of a file over %d MiB. Use start_line and end_line to read further.)", readDefaultWindow, readMaxScanBytes>>20)
-	case unranged && line > readDefaultWindow:
-		out += fmt.Sprintf("\n(Showing lines %d-%d of %d. Use start_line=%d to continue.)", start, end, line, end+1)
+		out += fmt.Sprintf("\n(Showing lines %d-%d of a file over %d MiB. Use start_line=%d to continue, or start_line and end_line to read further.)", start, shown, readMaxScanBytes>>20, shown+1)
+	case windowed && shown < line:
+		out += fmt.Sprintf("\n(Showing lines %d-%d of %d. Use start_line=%d to continue.)", start, shown, line, shown+1)
 	}
 	return Result{Output: out}
 }

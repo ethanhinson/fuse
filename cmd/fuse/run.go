@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
+	"github.com/ethanhinson/fuse/internal/research"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
@@ -197,15 +199,23 @@ func validateModelRefs(cfg config.Config, reg *model.Registry) error {
 // re-resolving containment on any of those paths is exactly the fail-open this
 // change exists to prevent. A nil sb yields a bash tool that REFUSES; it never
 // means "run on the host with an inherited environment".
+// searchAvailable reports whether web_search would have a provider to call.
+func searchAvailable(cfg config.ResearchConfig) bool {
+	_, err := research.Resolve(cfg, os.Getenv)
+	return err == nil
+}
+
 func defaultToolRegistry(sb *sandbox.Service, research config.ResearchConfig, skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
 	r := tools.NewRegistry()
 	for _, t := range tools.DefaultTools(sb) {
 		r.Register(t)
 	}
-	for _, t := range tools.CodeindexTools() {
-		r.Register(t)
+	// web_search is offered only when a search provider resolves: without one
+	// every call fails, and its schema would still ride along on every request.
+	// web_fetch needs no provider, so it stays.
+	if searchAvailable(research) {
+		r.Register(tools.NewWebSearch(research))
 	}
-	r.Register(tools.NewWebSearch(research))
 	r.Register(tools.NewWebFetch(research))
 	if skillLookup != nil {
 		r.Register(tools.NewSkillTool(skillLookup))
@@ -576,7 +586,12 @@ func childToolRegistry(parent *tools.Registry, names []string) (*tools.Registry,
 	}
 	sub, unknown := parent.Subset(names)
 	if len(unknown) > 0 {
-		return nil, fmt.Errorf("unknown tools in spawn request: %s", strings.Join(unknown, ", "))
+		msg := "unknown tools in spawn request: " + strings.Join(unknown, ", ")
+		if slices.Contains(unknown, "web_search") {
+			msg += " (web_search is not offered because no search provider is configured: set " +
+				"BRAVE_SEARCH_API_KEY or TAVILY_API_KEY, or [research.custom].url)"
+		}
+		return nil, errors.New(msg)
 	}
 	return sub, nil
 }

@@ -38,9 +38,10 @@ func TestDefaultRegistrySkillToolFollowsLookup(t *testing.T) {
 	}
 }
 
-// The default tool registry must register web_search and web_fetch, and a
-// Subset selecting them (plus the force-included spawn_agent) must contain both.
+// With a search provider configured, the default tool registry registers
+// web_search and web_fetch, and a Subset selecting them contains both.
 func TestDefaultRegistryIncludesWebTools(t *testing.T) {
+	t.Setenv("BRAVE_SEARCH_API_KEY", "test-key")
 	cfg := config.Default()
 	reg := defaultToolRegistry(nil, cfg.Research, nil)
 

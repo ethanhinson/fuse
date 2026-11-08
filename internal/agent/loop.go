@@ -560,6 +560,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		}
 
 		schemas := a.tools.Schemas()
+		if !hasRecoverableSegment(messages) {
+			schemas = withoutTool(schemas, "segment_read")
+		}
 		if a.stripSpawn != nil && a.stripSpawn() {
 			schemas = withoutSpawnAgent(schemas)
 		}
@@ -1192,9 +1195,15 @@ func (a *Agent) withSystem(messages []model.Message) []model.Message {
 // registry's backing array. Returns the input unchanged when spawn_agent is
 // absent (the common stripped-child case).
 func withoutSpawnAgent(schemas []model.ToolSchema) []model.ToolSchema {
+	return withoutTool(schemas, "spawn_agent")
+}
+
+// withoutTool returns schemas with any entry called name removed, preserving
+// order, in a fresh slice; unchanged when name is absent.
+func withoutTool(schemas []model.ToolSchema, name string) []model.ToolSchema {
 	present := false
 	for _, s := range schemas {
-		if s.Name == "spawn_agent" {
+		if s.Name == name {
 			present = true
 			break
 		}
@@ -1204,12 +1213,26 @@ func withoutSpawnAgent(schemas []model.ToolSchema) []model.ToolSchema {
 	}
 	out := make([]model.ToolSchema, 0, len(schemas)-1)
 	for _, s := range schemas {
-		if s.Name == "spawn_agent" {
+		if s.Name == name {
 			continue
 		}
 		out = append(out, s)
 	}
 	return out
+}
+
+// hasRecoverableSegment reports whether messages hold a compaction summary
+// that points at an archived segment, which is the only thing segment_read
+// can read. Until then the tool is not offered: its schema would ride along on
+// every call with nothing to recover. Offering it from the first compaction
+// on costs no cache reuse, since that compaction rewrites the history anyway.
+func hasRecoverableSegment(messages []model.Message) bool {
+	for _, m := range messages {
+		if m.Role == "assistant" && strings.HasPrefix(m.Content, summaryHeader) && strings.Contains(m.Content, recoveryMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 // withReturnResultTool returns schemas with the synthesized return_result tool

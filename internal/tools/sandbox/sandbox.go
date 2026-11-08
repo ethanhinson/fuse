@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
+	"syscall"
 )
 
 // Principal names who a Runner is acquired for. fuse runs one task per process, so
@@ -62,6 +63,11 @@ type Output struct {
 	Combined []byte
 	ExitCode int
 	TimedOut bool
+
+	// Signal is the signal that killed the shell, when one did (ExitCode is
+	// then -1); zero otherwise. Only the host substrate sees it directly: a
+	// container exec reports a killed process as exit status 128+N.
+	Signal syscall.Signal
 
 	// Waited is how long this Exec spent in the admission queue before a slot
 	// freed (change 0077). Zero on the uncontended path. It is a FACT about

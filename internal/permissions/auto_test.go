@@ -359,7 +359,7 @@ func TestAutoMode_NonBashSafeTool_AutoApprovesViaSafeList(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
+	for _, name := range []string{"read_file", "list_directory", "grep"} {
 		approve, called := newApproveRecorder(false)
 		g := New(autoCfg(config.AutoConfig{}, nil, nil),
 			newTestRegistry(name), Human(approve), WithWorkspaceRoot(root))
