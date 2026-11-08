@@ -1060,21 +1060,19 @@ func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Mes
 		a.renderer.ToolResult(r.call.Name, r.res)
 		// tool.result (change 0043): full result output + error flag, per call.
 		a.emit(event.KindToolResult, turn, event.ToolResultPayload{
-			ID:      r.call.ID,
-			Name:    r.call.Name,
-			Result:  r.res.Output,
-			IsError: r.res.IsError,
-
+			ID:          r.call.ID,
+			Name:        r.call.Name,
+			Result:      r.res.Output,
+			IsError:     r.res.IsError,
 			Attachments: attachmentRefs(r.res.Attachments),
 		})
 		// Output is already spill-bounded by the tool registry; history and
 		// display see the same recoverable form.
 		msgs = append(msgs, model.Message{
-			Role:       "tool",
-			ToolCallID: r.call.ID,
-			Name:       r.call.Name,
-			Content:    r.res.Output,
-
+			Role:        "tool",
+			ToolCallID:  r.call.ID,
+			Name:        r.call.Name,
+			Content:     r.res.Output,
 			Attachments: r.res.Attachments,
 		})
 	}

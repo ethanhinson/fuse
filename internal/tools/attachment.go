@@ -94,9 +94,8 @@ func LoadAttachment(name string, r io.Reader, mime string) (model.Attachment, er
 		return model.Attachment{}, fmt.Errorf("%s: %v", name, err)
 	}
 	if len(data) > MaxAttachmentBytes {
-		n, _ := io.Copy(io.Discard, io.LimitReader(r, 64<<20))
-		return model.Attachment{}, fmt.Errorf("%s is %.1f MB; attachments are limited to 3.5 MB. %s",
-			name, float64(int64(len(data))+n)/(1<<20), shrinkHint)
+		// Not read further just to report a size: the source may be huge or endless.
+		return model.Attachment{}, fmt.Errorf("%s is larger than 3.5 MB, the limit for attachments. %s", name, shrinkHint)
 	}
 	att := model.Attachment{MediaType: mime, Data: data, Name: name, Size: len(data)}
 	sum := sha256.Sum256(data)
