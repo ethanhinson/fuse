@@ -90,38 +90,23 @@ func childReportGuidanceIf(cfg config.Config) string {
 	return childReportGuidance
 }
 
-// spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.
+// spawnAgentBlock is the system-prompt block that describes spawn_agent.
 // Shared between one-shot and shell mode so behaviour is identical across both.
+// It agrees with the coding persona: spawning is for independent work that runs
+// in parallel, not for reading or looking things up. An earlier version told
+// models to spawn "aggressively", for any two independent steps and for reading
+// three or more files, which contradicted the coding prompt; in real runs and
+// in the Terminal-Bench baseline, heavy fan-out marked the failed attempts.
 const spawnAgentBlock = `
 
-## Parallel subagents — use spawn_agent aggressively
+## Subagents
 
-You have a ` + "`spawn_agent`" + ` tool. Use it whenever work can be split into independent parts.
+You have a ` + "`spawn_agent`" + ` tool. It runs a child agent to completion and returns the child's final message.
 
-### CRITICAL: emit ALL spawn_agent calls in ONE message
-
-When spawning multiple agents, you MUST call spawn_agent N times IN THE SAME RESPONSE.
-Do NOT call spawn_agent once, wait for the result, then call it again — that is sequential and wastes time.
-
-WRONG (sequential — do not do this):
-  → spawn_agent(label="Read A") … wait … result
-  → spawn_agent(label="Read B") … wait … result
-
-CORRECT (parallel — all in one response):
-  → spawn_agent(label="Read A")
-  → spawn_agent(label="Read B")
-  → spawn_agent(label="Read C")
-  … all three run concurrently, results arrive together …
-
-### When to spawn
-- Reading multiple files, packages, or repos → spawn one agent per source
-- Researching N topics → spawn N agents simultaneously
-- Any step with ≥2 independent sub-steps → spawn agents for each
-
-### Rules
-- Emit ALL spawns as parallel tool calls in one response, then summarise once all results arrive.
-- Never read 3+ files one at a time when you can spawn agents.
-- By default (no ` + "`tools`" + ` argument) the child inherits your FULL tool set and runs to completion; its final assistant message is the result.`
+- Use it only for independent pieces of work that can truly run in parallel, such as investigating separate, unrelated areas at once. Do the main task, and anything a few tool calls can do, yourself.
+- Do not spawn to read files or look something up: grep and read_file are faster, and keep what you learn in your own context.
+- When you do spawn several children, make all the spawn_agent calls in one response so they run concurrently, then continue once their results arrive.
+- By default (no ` + "`tools`" + ` argument) a child inherits your full tool set.`
 
 // headlessTurnBackstop is the generous default cap applied to headless entry
 // points (one-shot, non-TTY, mcp-server, research-probe) when max_turns is

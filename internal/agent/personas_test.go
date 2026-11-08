@@ -113,3 +113,17 @@ func TestComposeToolLessSystemPrompt(t *testing.T) {
 		t.Error("blank prefix and instructions must add nothing")
 	}
 }
+
+func TestUnnamedPersonaIsCoding(t *testing.T) {
+	for _, p := range []string{"", "  "} {
+		if PersonaPrompt(p) != PersonaPrompt("coding") {
+			t.Errorf("persona %q must get the coding prompt", p)
+		}
+		if ToolLessPersonaPrompt(p) != ToolLessPersonaPrompt("coding") {
+			t.Errorf("tool-less persona %q must get the coding line", p)
+		}
+	}
+	if PersonaPrompt("nope") != PersonaPrompt("general") {
+		t.Error("an unknown name still falls back to general")
+	}
+}
