@@ -202,6 +202,15 @@ func TestToConfigModelCarriesMetadata(t *testing.T) {
 	}
 }
 
+func TestToConfigModelKeepsReasoningOptOut(t *testing.T) {
+	if got := toConfigModel(model.ModelConfig{ID: "cloud/x", DropReasoning: true}); got.ReplayReasoning == nil || *got.ReplayReasoning {
+		t.Fatalf("an opted-out model must save replay_reasoning: false, got %v", got.ReplayReasoning)
+	}
+	if got := toConfigModel(model.ModelConfig{ID: "cloud/y"}); got.ReplayReasoning != nil {
+		t.Fatalf("the default must save nothing, got %v", *got.ReplayReasoning)
+	}
+}
+
 func TestModelsEditorDeleteNonDefault(t *testing.T) {
 	reg := model.NewRegistry("alpha", map[string]model.ModelConfig{
 		"alpha": {ID: "prov/alpha"},

@@ -273,7 +273,7 @@ func (m ShellModel) saveModelForm() (bool, tea.Model, tea.Cmd) {
 		if prev, err := m.reg.Resolve(f.origAlias); err == nil {
 			mc.MaxTokensCeiling = prev.MaxTokensCeiling
 			mc.ReasoningEffort = prev.ReasoningEffort
-			mc.ReplayReasoning = prev.ReplayReasoning
+			mc.DropReasoning = prev.DropReasoning
 			mc.SystemPrefix = prev.SystemPrefix
 			mc.Label = prev.Label
 			mc.Description = prev.Description
@@ -341,10 +341,13 @@ func toConfigModel(mc model.ModelConfig) config.ModelConfig {
 		Persona:          mc.Persona,
 		SystemPrefix:     mc.SystemPrefix,
 		ReasoningEffort:  mc.ReasoningEffort,
-		ReplayReasoning:  mc.ReplayReasoning,
 		Label:            mc.Label,
 		Description:      mc.Description,
 		Tags:             mc.Tags,
+	}
+	if mc.DropReasoning {
+		off := false
+		out.ReplayReasoning = &off
 	}
 	if mc.Hidden {
 		no := false

@@ -15,8 +15,8 @@ with `--fuse-option KEY=VALUE` (repeatable; written under the model's config ent
 GLOB` leaves tasks out on every arm, for example `'qemu-*'`, which cannot boot under emulation on arm64.
 
 ```sh
-python3 run.py --arms fuse --name replay-off --exclude-task 'qemu-*'
-python3 run.py --arms fuse --name replay-on --exclude-task 'qemu-*' --fuse-option replay_reasoning=true
+python3 run.py --arms fuse --name replay-on --exclude-task 'qemu-*'
+python3 run.py --arms fuse --name replay-off --exclude-task 'qemu-*' --fuse-option replay_reasoning=false
 ```
 
 `LLM_GATEWAY_KEY` must be set, and `OPENROUTER_API_KEY` too for the budget stop. Run arms one at a

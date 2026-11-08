@@ -37,7 +37,7 @@ def main():
     p.add_argument("--name", required=True)
     p.add_argument("--gateway", default="http://host.docker.internal:4000/v1")
     p.add_argument("--fuse-option", action="append", default=[], metavar="KEY=VALUE",
-                   help="model setting for the fuse arm, e.g. replay_reasoning=true (repeatable)")
+                   help="model setting for the fuse arm, e.g. replay_reasoning=false (repeatable)")
     p.add_argument("--exclude-task", action="append", default=[], metavar="GLOB",
                    help="leave out matching tasks on every arm (repeatable)")
     args = p.parse_args()

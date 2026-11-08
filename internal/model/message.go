@@ -48,7 +48,8 @@ type CompletionReq struct {
 	// ReplayReasoning sends each assistant message's Reasoning back in its
 	// native field. Models whose chat template expects their earlier reasoning
 	// inside a tool-call loop (DeepSeek, Kimi and others) otherwise start every
-	// call without it. Off sends no reasoning.
+	// call without it. Off sends no reasoning. The CLI sets it unless the model's
+	// config turns it off.
 	ReplayReasoning bool
 }
 
