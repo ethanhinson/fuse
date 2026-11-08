@@ -28,9 +28,16 @@ Use tools for their intended purpose. Output responses as plain text.
 Do not use bash to echo text — write it directly as your response.`,
 }
 
-// PersonaPrompt returns the system prompt for a named persona, falling back to
-// the general prompt for unknown names.
+// DefaultPersona is the persona of a model that names none. Fuse is a coding
+// harness, so an unconfigured model gets the coding prompt.
+const DefaultPersona = "coding"
+
+// PersonaPrompt returns the system prompt for a named persona: the coding prompt
+// when none is named, the general prompt for an unknown name.
 func PersonaPrompt(persona string) string {
+	if strings.TrimSpace(persona) == "" {
+		persona = DefaultPersona
+	}
 	if p, ok := personaPrompts[strings.ToLower(persona)]; ok {
 		return p
 	}
@@ -70,8 +77,11 @@ var toolLessPersonaPrompts = map[string]string{
 }
 
 // ToolLessPersonaPrompt returns the one-line persona prompt for a tool-less
-// agent, falling back to the general one for unknown names.
+// agent: coding when none is named, general for an unknown name.
 func ToolLessPersonaPrompt(persona string) string {
+	if strings.TrimSpace(persona) == "" {
+		persona = DefaultPersona
+	}
 	if p, ok := toolLessPersonaPrompts[strings.ToLower(persona)]; ok {
 		return p
 	}

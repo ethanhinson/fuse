@@ -92,3 +92,19 @@ func TestWithoutUnavailableSpawnBlockStripsHint(t *testing.T) {
 		t.Errorf("available: extra changed")
 	}
 }
+
+// The spawn guidance must agree with the coding prompt: no "spawn aggressively"
+// and no spawning to read files.
+func TestSpawnGuidanceDoesNotPushFanOut(t *testing.T) {
+	low := strings.ToLower(spawnAgentBlock)
+	for _, bad := range []string{"aggressive", "never read 3+ files", "spawn one agent per source"} {
+		if strings.Contains(low, bad) {
+			t.Errorf("spawn guidance still says %q", bad)
+		}
+	}
+	for _, want := range []string{"truly run in parallel", "do not spawn to read files", "in one response"} {
+		if !strings.Contains(low, want) {
+			t.Errorf("spawn guidance lost %q", want)
+		}
+	}
+}
