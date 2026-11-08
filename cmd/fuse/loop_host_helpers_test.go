@@ -302,7 +302,7 @@ func TestOneShotRunsAToolLessConfig(t *testing.T) {
 		have[n] = true
 	}
 	for _, want := range []string{
-		"bash", "read_file", "segment_read", "codeindex_impact", "codeindex_callers",
+		"bash", "read_file",
 		"spawn_agent",
 	} {
 		if !have[want] {

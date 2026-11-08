@@ -1,8 +1,6 @@
 // Package permissions provides the HITL permission gate for tool execution.
 package permissions
 
-import "strings"
-
 // PermissionMode controls global gate behaviour.
 type PermissionMode int
 
@@ -97,10 +95,7 @@ var safeList = map[string]bool{
 	"skill": true,
 }
 
-// onSafeList returns true for the hard-coded safe set and all codeindex_* tools.
+// onSafeList returns true for the hard-coded safe set.
 func onSafeList(name string) bool {
-	if strings.HasPrefix(name, "codeindex_") {
-		return true
-	}
 	return safeList[name]
 }

@@ -52,6 +52,9 @@ content forward and fold in the new tool results — rather than starting over. 
 
 // summaryHeader labels the injected summary so the model recognizes it as a
 // compaction artifact rather than fresh tool output.
+// recoveryMarker introduces a summary's archived-segment pointer.
+const recoveryMarker = "Recovery: grep your past at "
+
 const summaryHeader = "[context compacted — the older tool results below were summarized to free context]"
 
 // buildSummaryMessage assembles the synthetic message injected at the
@@ -71,7 +74,7 @@ func buildSummaryMessage(summary, pointer string) model.Message {
 	b.WriteString(strings.TrimSpace(summary))
 	if strings.TrimSpace(pointer) != "" {
 		b.WriteString("\n\n")
-		b.WriteString("Recovery: grep your past at ")
+		b.WriteString(recoveryMarker)
 		b.WriteString(pointer)
 	}
 	return model.Message{Role: "assistant", Content: b.String()}

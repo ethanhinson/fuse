@@ -61,9 +61,9 @@ func TestSafeListAutoApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(root)
-	g := New(cfg, newTestRegistry("read_file", "list_directory", "codeindex_callers"), Human(approve), WithWorkspaceRoot(root))
+	g := New(cfg, newTestRegistry("read_file", "list_directory", "grep"), Human(approve), WithWorkspaceRoot(root))
 
-	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
+	for _, name := range []string{"read_file", "list_directory", "grep"} {
 		res := g.Execute(context.Background(), name, `{}`)
 		if res.IsError {
 			t.Errorf("safe tool %q returned error: %s", name, res.Output)

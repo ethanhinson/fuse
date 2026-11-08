@@ -278,7 +278,7 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 		// The command RAN and exited non-zero: an ordinary result, so the
 		// checkout is an ordinary release and stays warm.
 		release(sandbox.CauseReleased)
-		return Result{IsError: true, Output: b.withBackpressureNote(fmt.Sprintf("%s\nerror: exit status %d", out.Combined, out.ExitCode), out.Waited)}
+		return Result{IsError: true, Output: b.withBackpressureNote(string(out.Combined)+"\n"+exitMessage(a.Command, out), out.Waited)}
 
 	default:
 		release(sandbox.CauseReleased)
