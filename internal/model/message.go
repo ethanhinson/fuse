@@ -51,6 +51,9 @@ type CompletionReq struct {
 	// call without it. Off sends no reasoning. The CLI sets it unless the model's
 	// config turns it off.
 	ReplayReasoning bool
+	// Dialect names the model family's request additions (see dialect.go). Empty
+	// detects it from Model.
+	Dialect string
 }
 
 // CompletionResp is the assistant's reply.
@@ -59,6 +62,7 @@ type CompletionResp struct {
 	ToolCalls    []ToolCall
 	InputTokens  int // prompt tokens reported by the gateway
 	CachedTokens int // of InputTokens, how many the provider served from its prefix cache (0 when unreported)
+	CacheWrite   int // of InputTokens, how many were written to the provider's cache (0 when unreported)
 	OutputTokens int // completion tokens reported by the gateway
 	// ReasoningTokens is how many of OutputTokens went to reasoning, 0 when unreported.
 	ReasoningTokens int

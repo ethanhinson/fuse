@@ -22,6 +22,9 @@ type ModelConfig struct {
 	// calls (config replay_reasoning: false). Its zero value replays, so built-in
 	// entries replay.
 	DropReasoning bool
+	// Dialect is the configured model family (config `dialect:`); empty detects
+	// it from ID.
+	Dialect string
 	// Operator display metadata shown by the model listings; nothing else
 	// reads it.
 	Label       string

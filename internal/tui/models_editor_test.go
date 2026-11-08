@@ -326,3 +326,9 @@ func TestModelsEditorOverlayClampsToWidth(t *testing.T) {
 		})
 	}
 }
+
+func TestToConfigModelKeepsDialect(t *testing.T) {
+	if got := toConfigModel(model.ModelConfig{ID: "proxy/x", Dialect: "anthropic"}); got.Dialect != "anthropic" {
+		t.Fatalf("dialect lost on save: %q", got.Dialect)
+	}
+}

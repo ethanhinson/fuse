@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ethanhinson/fuse/internal/model"
 )
 
 // validModes is the set of permission modes ParseMode understands. It is checked
@@ -106,6 +108,9 @@ func (c Config) Problems() []Problem {
 		case "", "none", "minimal", "low", "medium", "high", "xhigh":
 		default:
 			add("models."+alias+".reasoning_effort", "must be none, minimal, low, medium, high or xhigh, got %q", m.ReasoningEffort)
+		}
+		if m.Dialect != "" && !model.IsDialect(m.Dialect) {
+			add("models."+alias+".dialect", "must be one of %s (or empty to detect it from the id), got %q", strings.Join(model.DialectNames(), ", "), m.Dialect)
 		}
 	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {

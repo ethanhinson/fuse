@@ -45,6 +45,9 @@ type Agent struct {
 	// on the agent's own calls. Off, reasoning is dropped as replies arrive. The
 	// CLI turns it on unless the model's config sets replay_reasoning: false.
 	ReplayReasoning bool
+	// Dialect is the model family whose request additions apply to the agent's
+	// own calls (see model.CompletionReq.Dialect); empty detects it from the model.
+	Dialect string
 
 	observer     observe.Observer
 	model        Completer
