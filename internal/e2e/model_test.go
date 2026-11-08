@@ -262,14 +262,36 @@ func TestFinishReasonLength_NoToolCall_BoundedNonzero(t *testing.T) {
 	r := h.run()
 	wantCode(t, r, 1)
 	reqs := srv.requests()
-	if len(reqs) > 4 {
-		t.Fatalf("requests = %d, want a short climb to the ceiling", len(reqs))
+	// 1000, 2000, 4000, then two retries at the ceiling asking for smaller pieces.
+	if len(reqs) > 5 {
+		t.Fatalf("requests = %d, want a short climb to the ceiling and two retries", len(reqs))
 	}
 	if reqs[len(reqs)-1].MaxTok <= reqs[0].MaxTok {
 		t.Fatalf("output cap did not rise: %d -> %d", reqs[0].MaxTok, reqs[len(reqs)-1].MaxTok)
 	}
 	wantContains(t, r.stderr, "truncated", "stderr")
 	wantContains(t, r.stdout, "cut off mid sent", "stdout keeps the partial text")
+}
+
+// A reply cut off while only reasoning is retried at the same cap and the run
+// carries on: raising the cap only gave a spiralling model more room to fill.
+func TestFinishReasonLength_ReasoningOnly_RetriesAtSameCap(t *testing.T) {
+	t.Parallel()
+	thinking := func(w http.ResponseWriter, r *http.Request) {
+		sseHeader(w)
+		sse(w, finishChunk("length"))
+		sse(w, usageChunk(10, 1000))
+		done(w)
+	}
+	srv := newServer(t, thinking, text("all done"))
+	h := newHarness(t, srv)
+	r := h.run()
+	wantCode(t, r, 0)
+	reqs := srv.requests()
+	if len(reqs) != 2 || reqs[1].MaxTok != reqs[0].MaxTok {
+		t.Fatalf("want one retry at the same cap, got %d requests", len(reqs))
+	}
+	wantContains(t, r.stdout, "all done", "stdout")
 }
 
 // finish_reason length with a cut-off tool call must never execute the call.

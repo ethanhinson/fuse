@@ -381,6 +381,8 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	var lastNudgeAt int64
 	finishChecked := false
 	emptyReplies := 0
+	// cutOffRetries counts consecutive cut-off replies retried without more room.
+	cutOffRetries := 0
 	messages := history
 	// Record the seed's user turn(s) into the event stream, so a transcript rebuilt
 	// purely from events includes them.
@@ -618,14 +620,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
 		}
-		// A reply cut off before it decided anything is not an answer. Retry the same
-		// turn with more room, or fail the run; never treat it as the end of the work.
+		// A reply cut off before it decided anything is not an answer: retry the turn,
+		// never treat it as the end of the work. See cutOffPlan for how.
 		unusable := replyUnusable(resp, req.MaxTokens)
-		nextCap := req.MaxTokens
+		plan := cutOffPlan{}
 		if unusable {
-			nextCap = nextOutputCap(req.MaxTokens, a.outputCeiling(), window, estimate)
+			plan = planCutOff(resp, req.MaxTokens, a.outputCeiling(), window, estimate, cutOffRetries)
 		}
-		retrying := unusable && nextCap > req.MaxTokens
+		retrying := plan.retry
 		// Partial text survives the final failure so the human can see it. A cut-off
 		// tool call never enters history: its arguments are not what the model meant.
 		keepPartial := unusable && !retrying && resp.Content != "" && len(resp.ToolCalls) == 0
@@ -651,13 +653,22 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			return messages, lerr
 		}
 		if retrying {
-			a.renderer.Errorf("model reply cut off at %d output tokens; retrying with a cap of %d", req.MaxTokens, nextCap)
-			outputCap = nextCap
+			if plan.nextCap > req.MaxTokens {
+				a.renderer.Errorf("model reply cut off at %d output tokens; retrying with a cap of %d", req.MaxTokens, plan.nextCap)
+				outputCap = plan.nextCap
+			} else {
+				cutOffRetries++
+				a.renderer.Errorf("model reply cut off at %d output tokens; retrying (%d of %d)", req.MaxTokens, cutOffRetries, maxCutOffRetries)
+			}
+			if plan.nudge != "" {
+				messages = append(messages, model.Message{Role: "user", Content: plan.nudge})
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: plan.nudge})
+			}
 			turn--
 			continue
 		}
 		if unusable {
-			err := fmt.Errorf("%w: %d output tokens used, no higher cap is allowed; raise max_tokens_ceiling for this model or narrow the task", ErrOutputTruncated, req.MaxTokens)
+			err := fmt.Errorf("%w: %d replies in a row were cut off at %d output tokens; raise max_tokens_ceiling for this model or narrow the task", ErrOutputTruncated, cutOffRetries+1, req.MaxTokens)
 			if keepPartial {
 				a.renderer.Assistant(resp.Content)
 				messages = append(messages, a.historyMessage(resp))
@@ -697,6 +708,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			continue
 		}
 		emptyReplies = 0
+		cutOffRetries = 0
 		messages = append(messages, a.historyMessage(resp))
 
 		if len(resp.ToolCalls) == 0 {

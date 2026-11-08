@@ -15,7 +15,8 @@ import (
 )
 
 // fakeTruncatingGateway answers every chat request as a reply cut off at the cap
-// until okAtCap is reached, recording the caps it was asked for.
+// mid-sentence until okAtCap is reached, recording the caps it was asked for. The
+// cut-off replies carry text, so the agent treats them as needing more room.
 func fakeTruncatingGateway(t *testing.T, okAtCap int) (*httptest.Server, func() []int) {
 	t.Helper()
 	var mu sync.Mutex
@@ -30,7 +31,7 @@ func fakeTruncatingGateway(t *testing.T, okAtCap int) (*httptest.Server, func() 
 		caps = append(caps, req.MaxTokens)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
-		content, reason := "", "length"
+		content, reason := "cut off mid", "length"
 		if okAtCap > 0 && req.MaxTokens >= okAtCap {
 			content, reason = "finished", "stop"
 		}
@@ -76,8 +77,9 @@ func TestOneShotExitsNonZeroWhenRepliesStayTruncated(t *testing.T) {
 	if !strings.Contains(stderr, "truncated at the output cap") {
 		t.Errorf("stderr does not name the cause:\n%s", stderr)
 	}
-	if got := caps(); len(got) != 3 || got[0] != 100 || got[2] != 400 {
-		t.Errorf("caps = %v, want 100 doubling to 400", got)
+	// Doubling to the 4x ceiling, then two retries there asking for smaller pieces.
+	if got := caps(); len(got) != 5 || got[0] != 100 || got[1] != 200 || got[2] != 400 || got[4] != 400 {
+		t.Errorf("caps = %v, want 100 doubling to 400, then two more at 400", got)
 	}
 }
 

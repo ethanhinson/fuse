@@ -17,8 +17,8 @@ const (
 	// defaultOutputCeilingFactor is how far a truncated reply may raise the
 	// model's max_tokens when it configures no max_tokens_ceiling. The cap covers
 	// reasoning as well as the visible reply, so a reasoning model can spend all
-	// of it thinking and produce nothing. Doubling from the configured value gives
-	// two retries before the run fails.
+	// of it thinking and produce nothing. Only a reply cut off while writing
+	// raises it (see planCutOff); doubling gives two raises.
 	defaultOutputCeilingFactor = 4
 	// outputCapFloor is the smallest cap the context clamp will send, so a nearly
 	// full window still gets a usable reply or a provider length error, which the
@@ -71,6 +71,58 @@ func nextOutputCap(current, ceiling, window, estimate int) int {
 		return current
 	}
 	return next
+}
+
+// maxCutOffRetries is how many consecutive cut-off replies a run retries without
+// more room before it fails. Raising the cap does not count against it.
+const maxCutOffRetries = 2
+
+// Notes added before a retry, so the model knows why its reply vanished.
+const (
+	cutOffThinkingPrompt = "[cut-off] Your last reply spent the whole output limit on reasoning and was discarded before it acted. Keep your reasoning short and make the next tool call now."
+	cutOffWritingPrompt  = "[cut-off] Your last reply hit the output limit before it finished and was discarded. Do the work in smaller pieces: write a large file in parts, or give a shorter answer."
+)
+
+// cutOffPlan is what to do about a reply cut off before it decided anything.
+type cutOffPlan struct {
+	retry   bool
+	nextCap int    // the cap for the retry; above the current one means raised
+	nudge   string // a note to add before retrying, "" for none
+}
+
+// planCutOff decides how to retry a cut-off reply. retries is how many cut-off
+// replies in a row were already retried without more room.
+//
+// A reply cut off while only reasoning (no text, no tool call) gets no more room:
+// a model that is spiralling fills whatever cap it is given, so doubling only made
+// the next runaway cost twice as much. Its first retry is plain, because one
+// rerun usually comes back short, and a note would be a new user message, which
+// makes some chat templates drop the reasoning sent back. A second one in a row
+// gets a note.
+//
+// A reply cut off while writing (text or tool-call arguments) may need the room,
+// say for a large file, so the cap doubles up to the ceiling. Once it cannot rise,
+// the retry asks for smaller pieces.
+//
+// Past maxCutOffRetries the run fails.
+func planCutOff(resp model.CompletionResp, limit, ceiling, window, estimate, retries int) cutOffPlan {
+	thinkingOnly := strings.TrimSpace(resp.Content) == "" && len(resp.ToolCalls) == 0
+	if !thinkingOnly {
+		if next := nextOutputCap(limit, ceiling, window, estimate); next > limit {
+			return cutOffPlan{retry: true, nextCap: next}
+		}
+	}
+	if retries >= maxCutOffRetries {
+		return cutOffPlan{nextCap: limit}
+	}
+	plan := cutOffPlan{retry: true, nextCap: limit}
+	switch {
+	case !thinkingOnly:
+		plan.nudge = cutOffWritingPrompt
+	case retries > 0:
+		plan.nudge = cutOffThinkingPrompt
+	}
+	return plan
 }
 
 // replyUnusable reports whether a truncated reply cannot be acted on: it has no
