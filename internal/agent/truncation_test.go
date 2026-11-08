@@ -64,15 +64,21 @@ func decodeCallEnds(t *testing.T, rec *recordingStore) []event.ModelCallEndPaylo
 }
 
 // The incident: every token went to reasoning, nothing came back, and the run
-// ended as a success. It must retry with more room and reach the real answer.
-func TestTruncatedEmptyReplyRetriesWithMoreRoom(t *testing.T) {
+// ended as a success. It must retry and reach the real answer, without raising the
+// cap: a spiralling model fills whatever room it gets.
+func TestThinkingOnlyCutOffRetriesAtTheSameCap(t *testing.T) {
 	comp := &capCompleter{responses: []model.CompletionResp{cutOff(""), {Content: "done", FinishReason: "stop", InputTokens: 100}}}
 	hist, rec, err := runCapped(t, comp, &fakeExec{}, 1000)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if got := comp.caps; len(got) != 2 || got[0] != 1000 || got[1] != 2000 {
-		t.Errorf("caps = %v, want [1000 2000]", got)
+	if got := comp.caps; len(got) != 2 || got[0] != 1000 || got[1] != 1000 {
+		t.Errorf("caps = %v, want [1000 1000]", got)
+	}
+	for _, m := range comp.lastMsgs {
+		if strings.HasPrefix(m.Content, "[cut-off]") {
+			t.Error("the first retry must be plain: a note is a new user message")
+		}
 	}
 	last := hist[len(hist)-1]
 	if last.Content != "done" {
@@ -89,16 +95,20 @@ func TestTruncatedEmptyReplyRetriesWithMoreRoom(t *testing.T) {
 	}
 }
 
-// The failure must be an error, because a clean return is what let a run with no
-// work done exit 0.
-func TestTruncationPastCeilingFailsTheRun(t *testing.T) {
+// Repeated cut-offs still fail as an error, because a clean return is what let a
+// run with no work done exit 0. Thinking-only replies never raise the cap, and the
+// second retry in a row carries a note.
+func TestRepeatedThinkingCutOffsFailTheRun(t *testing.T) {
 	comp := &capCompleter{responses: []model.CompletionResp{cutOff("")}}
 	_, rec, err := runCapped(t, comp, &fakeExec{}, 1000)
 	if !errors.Is(err, ErrOutputTruncated) {
 		t.Fatalf("err = %v, want ErrOutputTruncated", err)
 	}
-	if got := comp.caps; len(got) != 3 || got[2] != 4000 {
-		t.Errorf("caps = %v, want doubling to the 4x ceiling", got)
+	if got := comp.caps; len(got) != 3 || got[0] != 1000 || got[1] != 1000 || got[2] != 1000 {
+		t.Errorf("caps = %v, want three attempts at 1000", got)
+	}
+	if last := comp.lastMsgs[len(comp.lastMsgs)-1]; last.Content != cutOffThinkingPrompt {
+		t.Errorf("the last retry should carry the reasoning note, got %+v", last)
 	}
 	found := false
 	for _, e := range rec.events {
@@ -123,6 +133,48 @@ func TestTruncatedTextIsNotAFinalAnswer(t *testing.T) {
 	}
 	if hist[len(hist)-1].Content != "whole answer" {
 		t.Errorf("final = %q", hist[len(hist)-1].Content)
+	}
+}
+
+// A reply cut off while writing gets more room up to the ceiling, then retries
+// asking for smaller pieces, then fails.
+func TestWritingCutOffRaisesThenAsksForSmallerPieces(t *testing.T) {
+	comp := &capCompleter{responses: []model.CompletionResp{cutOff("partial")}}
+	_, _, err := runCapped(t, comp, &fakeExec{}, 1000)
+	if !errors.Is(err, ErrOutputTruncated) {
+		t.Fatalf("err = %v", err)
+	}
+	want := []int{1000, 2000, 4000, 4000, 4000}
+	if len(comp.caps) != len(want) {
+		t.Fatalf("caps = %v, want %v", comp.caps, want)
+	}
+	for i := range want {
+		if comp.caps[i] != want[i] {
+			t.Fatalf("caps = %v, want %v", comp.caps, want)
+		}
+	}
+	if last := comp.lastMsgs[len(comp.lastMsgs)-1]; last.Content != cutOffWritingPrompt {
+		t.Errorf("a retry at the ceiling should ask for smaller pieces, got %+v", last)
+	}
+}
+
+// A usable reply resets the count, so cut-offs spread over a long run do not add up
+// to a failure.
+func TestUsableReplyResetsCutOffRetries(t *testing.T) {
+	call := model.ToolCall{ID: "1", Name: "read_file", Arguments: `{}`}
+	ok := model.CompletionResp{ToolCalls: []model.ToolCall{call}, FinishReason: "tool_calls", InputTokens: 100}
+	comp := &capCompleter{responses: []model.CompletionResp{
+		cutOff(""), cutOff(""), ok,
+		cutOff(""), cutOff(""), ok,
+		{Content: "done", FinishReason: "stop", InputTokens: 100},
+	}}
+	if _, _, err := runCapped(t, comp, &fakeExec{}, 1000); err != nil {
+		t.Fatalf("cut-offs separated by real work must not end the run: %v", err)
+	}
+	for _, c := range comp.caps {
+		if c != 1000 {
+			t.Fatalf("caps = %v, thinking-only cut-offs must not raise the cap", comp.caps)
+		}
 	}
 }
 
@@ -182,7 +234,7 @@ func TestTruncatedReplyWithCompleteToolCallsRuns(t *testing.T) {
 func TestRaisedCapIsSticky(t *testing.T) {
 	call := model.ToolCall{ID: "1", Name: "read_file", Arguments: `{}`}
 	comp := &capCompleter{responses: []model.CompletionResp{
-		cutOff(""),
+		cutOff("partial"),
 		{ToolCalls: []model.ToolCall{call}, FinishReason: "tool_calls", InputTokens: 100},
 		{Content: "done", FinishReason: "stop", InputTokens: 100},
 	}}
@@ -219,18 +271,20 @@ func TestDiscardedReplyStillCountsUsage(t *testing.T) {
 }
 
 func TestOutputCeilingIsConfigurable(t *testing.T) {
-	// Equal to max_tokens: a hard limit, so no retry at all.
-	comp := &capCompleter{responses: []model.CompletionResp{cutOff("")}}
+	// Equal to max_tokens: a hard limit, so retries never raise the cap.
+	comp := &capCompleter{responses: []model.CompletionResp{cutOff("partial")}}
 	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 1000)
 	a.SetOutputCeiling(1000)
 	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "t"}}); !errors.Is(err, ErrOutputTruncated) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(comp.caps) != 1 {
-		t.Errorf("caps = %v, want one attempt under a hard limit", comp.caps)
+	for _, c := range comp.caps {
+		if c != 1000 {
+			t.Errorf("caps = %v, want every attempt at the hard limit", comp.caps)
+		}
 	}
 	// Above the default factor.
-	comp = &capCompleter{responses: []model.CompletionResp{cutOff(""), cutOff(""), cutOff(""), {Content: "done", FinishReason: "stop", InputTokens: 100}}}
+	comp = &capCompleter{responses: []model.CompletionResp{cutOff("partial"), cutOff("partial"), cutOff("partial"), {Content: "done", FinishReason: "stop", InputTokens: 100}}}
 	a = New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 1000)
 	a.SetOutputCeiling(8000)
 	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "t"}}); err != nil {
@@ -241,15 +295,18 @@ func TestOutputCeilingIsConfigurable(t *testing.T) {
 	}
 }
 
-// With no cap sent, the provider's limit applies and there is nothing to raise.
-func TestTruncationWithNoCapFailsWithoutRetry(t *testing.T) {
-	comp := &capCompleter{responses: []model.CompletionResp{cutOff("")}}
+// With no cap sent, the provider's limit applies and there is nothing to raise:
+// retries stay uncapped and the run still fails in the end.
+func TestTruncationWithNoCapNeverRaises(t *testing.T) {
+	comp := &capCompleter{responses: []model.CompletionResp{cutOff("partial")}}
 	_, _, err := runCapped(t, comp, &fakeExec{}, 0)
 	if !errors.Is(err, ErrOutputTruncated) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(comp.caps) != 1 {
-		t.Errorf("caps = %v", comp.caps)
+	for _, c := range comp.caps {
+		if c != 0 {
+			t.Errorf("caps = %v, want no cap sent", comp.caps)
+		}
 	}
 }
 
@@ -257,7 +314,7 @@ func TestTruncationWithNoCapFailsWithoutRetry(t *testing.T) {
 // confusing gateway failure.
 func TestProviderRefusingRaisedCap(t *testing.T) {
 	comp := &capCompleter{
-		responses: []model.CompletionResp{cutOff("")},
+		responses: []model.CompletionResp{cutOff("partial")},
 		errAtCap:  2000,
 		err:       errors.New("gateway status 400: max_tokens must be <= 1000"),
 	}
@@ -271,7 +328,7 @@ func TestProviderRefusingRaisedCap(t *testing.T) {
 func TestRaisedCapIsClampedToTheWindow(t *testing.T) {
 	comp := &capCompleter{responses: []model.CompletionResp{
 		{ToolCalls: []model.ToolCall{{ID: "1", Name: "read_file", Arguments: `{}`}}, FinishReason: "tool_calls", InputTokens: 90_000},
-		cutOff(""),
+		cutOff("partial"),
 		{Content: "done", FinishReason: "stop", InputTokens: 90_000},
 	}}
 	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 8_000)
