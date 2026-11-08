@@ -43,6 +43,10 @@ type ModelConfig struct {
 	// it; without it every call starts from scratch. Unset means on; false turns
 	// it off. Nothing is sent for a model that returns no reasoning.
 	ReplayReasoning *bool `yaml:"replay_reasoning,omitempty"`
+	// Dialect names the model family whose request additions apply: anthropic
+	// (prompt-cache breakpoints) or openai (none). Empty detects it from the
+	// model ID, so Claude models get anthropic without configuration.
+	Dialect string `yaml:"dialect,omitempty"`
 	// Operator display metadata shown by the model listings (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
 	// long-context; other strings pass through.

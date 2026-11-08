@@ -182,6 +182,37 @@ type wireMessage struct {
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 	Reasoning        string `json:"reasoning,omitempty"`
 	ReasoningText    string `json:"reasoning_text,omitempty"`
+
+	// cacheBreakpoint sends Content as one text part marked cache_control, the
+	// OpenAI content-part form of an Anthropic prompt-cache breakpoint. Set by
+	// a dialect (see anthropicDialect); never read from a reply.
+	cacheBreakpoint bool
+}
+
+// wireContentPart is one part of a message sent in content-part form.
+type wireContentPart struct {
+	Type         string            `json:"type"`
+	Text         string            `json:"text"`
+	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
+}
+
+type wireCacheControl struct {
+	Type string `json:"type"`
+}
+
+func (m *wireMessage) markCacheBreakpoint() { m.cacheBreakpoint = true }
+
+// MarshalJSON sends Content as a string, or as a single cache-marked text part
+// when the message is a cache breakpoint.
+func (m wireMessage) MarshalJSON() ([]byte, error) {
+	type plain wireMessage
+	if !m.cacheBreakpoint {
+		return json.Marshal(plain(m))
+	}
+	return json.Marshal(struct {
+		plain
+		Content []wireContentPart `json:"content"`
+	}{plain(m), []wireContentPart{{Type: "text", Text: m.Content, CacheControl: &wireCacheControl{Type: "ephemeral"}}}})
 }
 
 // Reasoning wire fields, in the order a reply's reasoning is read from them.
@@ -278,6 +309,10 @@ func (u wireUsage) reasoningTokens() int {
 
 type wirePromptTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
+	// CacheWriteTokens is how many prompt tokens were written to the provider's
+	// cache on this call (OpenRouter's name for Anthropic's cache creation),
+	// billed above the plain input rate.
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 // cachedTokens reads the prefix-cache hit count, 0 when unreported.
@@ -286,6 +321,14 @@ func (u wireUsage) cachedTokens() int {
 		return 0
 	}
 	return u.PromptTokensDetails.CachedTokens
+}
+
+// cacheWriteTokens reads the cache-write count, 0 when unreported.
+func (u wireUsage) cacheWriteTokens() int {
+	if u.PromptTokensDetails == nil {
+		return 0
+	}
+	return u.PromptTokensDetails.CacheWriteTokens
 }
 
 type wireChoice struct {
@@ -444,6 +487,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		wt.Function.Parameters = t.Parameters
 		payload.Tools = append(payload.Tools, wt)
 	}
+	// The model family's additions (cache marks for Anthropic, nothing for
+	// OpenAI-style providers); see dialect.go.
+	resolveDialect(req.Dialect, req.Model).prepare(&payload)
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -704,6 +750,7 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ Completion
 		ReasoningField:  field,
 		InputTokens:     wr.Usage.PromptTokens,
 		CachedTokens:    wr.Usage.cachedTokens(),
+		CacheWrite:      wr.Usage.cacheWriteTokens(),
 		OutputTokens:    wr.Usage.CompletionTokens,
 		ReasoningTokens: wr.Usage.reasoningTokens(),
 		FinishReason:    wr.Choices[0].FinishReason,
@@ -877,6 +924,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		ReasoningField:  field,
 		InputTokens:     usage.PromptTokens,
 		CachedTokens:    usage.cachedTokens(),
+		CacheWrite:      usage.cacheWriteTokens(),
 		OutputTokens:    usage.CompletionTokens,
 		ReasoningTokens: usage.reasoningTokens(),
 		FinishReason:    finishReason,
@@ -910,8 +958,8 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 		wr.Choices[0].Message.ToolCalls = append(wr.Choices[0].Message.ToolCalls, w)
 	}
 	wr.Usage = wireUsage{PromptTokens: out.InputTokens, CompletionTokens: out.OutputTokens}
-	if out.CachedTokens > 0 {
-		wr.Usage.PromptTokensDetails = &wirePromptTokensDetails{CachedTokens: out.CachedTokens}
+	if out.CachedTokens > 0 || out.CacheWrite > 0 {
+		wr.Usage.PromptTokensDetails = &wirePromptTokensDetails{CachedTokens: out.CachedTokens, CacheWriteTokens: out.CacheWrite}
 	}
 	if out.ReasoningTokens > 0 {
 		wr.Usage.CompletionTokensDetails = &wireCompletionTokensDetails{ReasoningTokens: out.ReasoningTokens}

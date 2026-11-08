@@ -580,6 +580,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			MaxTokens:       clampOutputCap(outputCap, window, estimate),
 			ReasoningEffort: a.ReasoningEffort,
 			ReplayReasoning: a.ReplayReasoning,
+			Dialect:         a.Dialect,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
