@@ -38,6 +38,8 @@ def main():
     p.add_argument("--gateway", default="http://host.docker.internal:4000/v1")
     p.add_argument("--fuse-option", action="append", default=[], metavar="KEY=VALUE",
                    help="model setting for the fuse arm, e.g. replay_reasoning=false (repeatable)")
+    p.add_argument("--include-task", action="append", default=[], metavar="GLOB",
+                   help="run only matching tasks (repeatable)")
     p.add_argument("--exclude-task", action="append", default=[], metavar="GLOB",
                    help="leave out matching tasks on every arm (repeatable)")
     args = p.parse_args()
@@ -56,6 +58,8 @@ def main():
     print(f"{args.name}: fuse {sha}, credit {start}, budget {args.budget}, fuse options {opts}", flush=True)
     common = ["-d", args.dataset, "-o", args.jobs, "-m", "openai/" + args.model, "-y", "--quiet",
               "-k", str(args.attempts), "-n", str(args.concurrency)]
+    for g in args.include_task:
+        common += ["-i", g]
     for g in args.exclude_task:
         common += ["-x", g]
     for arm in args.arms.split(","):

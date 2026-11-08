@@ -103,6 +103,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
 	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run, also for a cli/ model's tool subprocess - a deliberate footgun)")
+	taskFile := fs.String("task-file", "", "read the task from this file instead of the command line, keeping it out of the process list (- = stdin)")
 	maxRunDuration := fs.Duration("max-run-duration", cfg.MaxRunDuration, "stop the run with a nonzero exit after this long, e.g. 30m (0 = no limit; default: max_run_duration from the home config)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -112,12 +113,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	rest := fs.Args()
-	if len(rest) == 0 {
+	var task string
+	switch {
+	case *taskFile != "" && len(rest) > 0:
+		fmt.Fprintln(stderr, "give the task either as an argument or with --task-file, not both")
+		return 2
+	case *taskFile != "":
+		t, err := readTaskFile(*taskFile)
+		if err != nil {
+			fmt.Fprintf(stderr, "--task-file: %v\n", err)
+			return 2
+		}
+		task = t
+	case len(rest) > 0:
+		task = rest[0]
+	default:
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--max-run-duration D] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--max-run-duration D] (\"<task>\" | --task-file FILE)")
 		return 2
 	}
-	task := rest[0]
 
 	// An empty --model means "config default", as the flag help promises and as
 	// the other entry points already implement (runShell seeds its alias from

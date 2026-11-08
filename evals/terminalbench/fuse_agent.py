@@ -1,6 +1,6 @@
 """Harbor adapter: runs fuse as shipped, with bash directly in the task container."""
 import os
-import shlex
+import tempfile
 from pathlib import Path
 
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
@@ -40,15 +40,31 @@ class FuseAgent(BaseInstalledAgent):
         # run.py --fuse-option: model settings under test, "key: value" pairs joined by ";".
         for opt in filter(None, env.get("FUSE_BENCH_MODEL_OPTS", "").split(";")):
             config += f"    {opt}\n"
+        # The task and the config (which holds the gateway key) go in as files. On the
+        # command line they are visible to every process in the container, and a model
+        # that kills processes by matching command lines killed its own fuse that way.
+        await self._upload_text(environment, config, "/tmp/fuse-config.yml")
+        await self._upload_text(environment, instruction, "/tmp/fuse-task.txt")
         cmd = (
-            'mkdir -p "$HOME/.fuse" && '
-            f'printf %s {shlex.quote(config)} > "$HOME/.fuse/config.yml" && '
+            'mkdir -p "$HOME/.fuse" && cp /tmp/fuse-config.yml "$HOME/.fuse/config.yml" && '
+            "{ rm -f /tmp/fuse-config.yml 2>/dev/null || true; } && "
             "printf 'handler: host\\n' > \"$HOME/.fuse/sandbox.local.yml\"; "
             "/usr/local/bin/fuse --model baseline --approve-all --trace /logs/agent/trace.jsonl "
-            f"{shlex.quote(instruction)} > /logs/agent/fuse.txt 2>&1; "
+            "--task-file /tmp/fuse-task.txt > /logs/agent/fuse.txt 2>&1; "
             'echo "fuse exit $?" >> /logs/agent/fuse.txt'
         )
         await self.exec_as_agent(environment, cmd)
+
+    async def _upload_text(self, environment, text: str, dest: str) -> None:
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(text)
+            local = f.name
+        try:
+            await environment.upload_file(Path(local), dest)
+        finally:
+            os.unlink(local)
+        # Uploads land as root; the agent user must be able to read and move them.
+        await self.exec_as_root(environment, f"chmod 666 {dest}")
 
     def populate_context_post_run(self, context) -> None:
         return None
