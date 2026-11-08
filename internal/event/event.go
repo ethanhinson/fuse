@@ -282,6 +282,20 @@ type ToolResultPayload struct {
 	// produced by a real tool execution (e.g. a manufactured failure for an
 	// orphaned spawn).
 	Synthetic bool `json:"synthetic,omitempty"`
+	// Attachments names the images delivered with the result: metadata only, never bytes.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
+}
+
+// AttachmentRef describes an image attached to a message. It carries a ref, size
+// and hash, never the bytes.
+type AttachmentRef struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Size      int    `json:"size"`
+	SHA256    string `json:"sha256"`
+	Ref       string `json:"ref,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
 }
 
 type SpawnStartPayload struct {
@@ -497,6 +511,8 @@ type UserInputPayload struct {
 	// Source names a non-human speaker for a steered turn; empty for a plain human or
 	// task turn. Informational only.
 	Source string `json:"source,omitempty"`
+	// Attachments names the images sent with the turn's text.
+	Attachments []AttachmentRef `json:"attachments,omitempty"`
 }
 
 // NoProgressPayload accompanies KindNoProgress: Calls tool calls across the agent

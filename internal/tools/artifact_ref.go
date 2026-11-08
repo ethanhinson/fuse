@@ -105,7 +105,7 @@ func readLimited(r io.Reader) ([]byte, error) {
 func isGzipMagic(b []byte) bool { return len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b }
 
 // listKinds is the order a kind-less prefix lists a loop's artifacts in.
-var listKinds = []artifact.Kind{artifact.KindSpill, artifact.KindSegment, artifact.KindSegmentIndex}
+var listKinds = []artifact.Kind{artifact.KindSpill, artifact.KindSegment, artifact.KindSegmentIndex, artifact.KindAttachment}
 
 // listArtifacts lists the artifacts under an art:// prefix (art://t/l,
 // art://t/l/<kind>, or a full ref). handled is false for any other path. The

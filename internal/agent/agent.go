@@ -48,6 +48,9 @@ type Agent struct {
 	// Dialect is the model family whose request additions apply to the agent's
 	// own calls (see model.CompletionReq.Dialect); empty detects it from the model.
 	Dialect string
+	// Attachments is whether the model accepts images. It gates read_file
+	// attachments and sets CompletionReq.Attachments.
+	Attachments bool
 
 	observer     observe.Observer
 	model        Completer

@@ -188,3 +188,12 @@ func TestBindingContext(t *testing.T) {
 		t.Fatalf("BindingFrom = %+v, %v", got, ok)
 	}
 }
+
+func TestKindAttachmentKnown(t *testing.T) {
+	if !artifact.KindAttachment.Known() {
+		t.Fatal("KindAttachment not known")
+	}
+	if _, err := artifact.ParseRef("art://t/l/attachment/x1"); err != nil {
+		t.Fatal(err)
+	}
+}

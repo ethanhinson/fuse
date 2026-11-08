@@ -47,9 +47,14 @@ type ModelConfig struct {
 	// (prompt-cache breakpoints) or openai (none). Empty detects it from the
 	// model ID, so Claude models get anthropic without configuration.
 	Dialect string `yaml:"dialect,omitempty"`
+	// Attachments is whether the model accepts image attachments. Unset detects
+	// it: Claude models and entries tagged `vision` accept them. `cli/` models
+	// never do.
+	Attachments *bool `yaml:"attachments,omitempty"`
 	// Operator display metadata shown by the model listings (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
-	// long-context; other strings pass through.
+	// long-context; other strings pass through. "vision" also turns on
+	// attachments when `attachments` is unset.
 	Label       string   `yaml:"label,omitempty"`
 	Description string   `yaml:"description,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`

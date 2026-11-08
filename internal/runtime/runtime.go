@@ -33,6 +33,8 @@ type Runtime interface {
 type LoopConfig struct {
 	Task    string // the initial user task
 	ModelID string // resolved gateway model id; passed to the agent factory
+	// Attachments are images sent with the task message.
+	Attachments []model.Attachment
 }
 
 // LoopHandle is a running loop.
@@ -139,7 +141,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	h := &loopHandle{id: rootID, done: make(chan struct{})}
 	go func() {
 		defer close(h.done)
-		msgs, rerr := a.Run(loopCtx, []model.Message{{Role: "user", Content: cfg.Task}})
+		msgs, rerr := a.Run(loopCtx, []model.Message{{Role: "user", Content: cfg.Task, Attachments: cfg.Attachments}})
 		end(observeOutcome(rerr))
 		h.msgs, h.err = msgs, rerr
 		closeStore(store)

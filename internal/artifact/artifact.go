@@ -28,12 +28,13 @@ const (
 	KindSpill        Kind = "spill"
 	KindSegment      Kind = "segment"
 	KindSegmentIndex Kind = "segment-index"
+	KindAttachment   Kind = "attachment"
 )
 
 // Known reports whether k is one of the declared kinds.
 func (k Kind) Known() bool {
 	switch k {
-	case KindSpill, KindSegment, KindSegmentIndex:
+	case KindSpill, KindSegment, KindSegmentIndex, KindAttachment:
 		return true
 	}
 	return false

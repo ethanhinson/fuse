@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -187,13 +189,21 @@ type wireMessage struct {
 	// OpenAI content-part form of an Anthropic prompt-cache breakpoint. Set by
 	// a dialect (see anthropicDialect); never read from a reply.
 	cacheBreakpoint bool
+	// images are sent as image_url parts after the text, in content-part form.
+	// Set from Message.Attachments; never read from a reply.
+	images []Attachment
 }
 
 // wireContentPart is one part of a message sent in content-part form.
 type wireContentPart struct {
 	Type         string            `json:"type"`
-	Text         string            `json:"text"`
+	Text         string            `json:"text,omitempty"`
+	ImageURL     *wireImageURL     `json:"image_url,omitempty"`
 	CacheControl *wireCacheControl `json:"cache_control,omitempty"`
+}
+
+type wireImageURL struct {
+	URL string `json:"url"`
 }
 
 type wireCacheControl struct {
@@ -202,17 +212,30 @@ type wireCacheControl struct {
 
 func (m *wireMessage) markCacheBreakpoint() { m.cacheBreakpoint = true }
 
-// MarshalJSON sends Content as a string, or as a single cache-marked text part
-// when the message is a cache breakpoint.
+// MarshalJSON sends Content as a string, or in content-part form (a text part,
+// then one image part per attachment) when the message is a cache breakpoint or
+// carries images. A cache mark goes on the last part, so the cached prefix
+// includes the images.
 func (m wireMessage) MarshalJSON() ([]byte, error) {
 	type plain wireMessage
-	if !m.cacheBreakpoint {
+	if !m.cacheBreakpoint && len(m.images) == 0 {
 		return json.Marshal(plain(m))
+	}
+	var parts []wireContentPart
+	if m.Content != "" {
+		parts = append(parts, wireContentPart{Type: "text", Text: m.Content})
+	}
+	for _, im := range m.images {
+		url := "data:" + im.MediaType + ";base64," + base64.StdEncoding.EncodeToString(im.Data)
+		parts = append(parts, wireContentPart{Type: "image_url", ImageURL: &wireImageURL{URL: url}})
+	}
+	if m.cacheBreakpoint && len(parts) > 0 {
+		parts[len(parts)-1].CacheControl = &wireCacheControl{Type: "ephemeral"}
 	}
 	return json.Marshal(struct {
 		plain
 		Content []wireContentPart `json:"content"`
-	}{plain(m), []wireContentPart{{Type: "text", Text: m.Content, CacheControl: &wireCacheControl{Type: "ephemeral"}}}})
+	}{plain(m), parts})
 }
 
 // Reasoning wire fields, in the order a reply's reasoning is read from them.
@@ -459,8 +482,21 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		Model: req.Model, MaxTokens: req.MaxTokens, ToolChoice: req.ToolChoice, ReasoningEffort: req.ReasoningEffort,
 		Stream: true, StreamOptions: &wireStreamOptions{IncludeUsage: true},
 	}
+	var nImages, b64Bytes int
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		for _, att := range m.Attachments {
+			switch {
+			case req.Attachments && len(att.Data) > 0:
+				wm.images = append(wm.images, att)
+				nImages++
+				b64Bytes += base64.StdEncoding.EncodedLen(len(att.Data))
+			case !req.Attachments:
+				wm.Content += "\n[image " + att.Label() + " not sent: this model does not accept attachments]"
+			default:
+				wm.Content += "\n[image " + att.Label() + " not available]"
+			}
+		}
 		if req.ReplayReasoning && m.Role == "assistant" && m.Reasoning != "" {
 			wm.setReasoning(m.Reasoning, m.ReasoningField)
 		}
@@ -495,7 +531,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	if err != nil {
 		return CompletionResp{}, err
 	}
-	a.tracef("REQ", prettyJSON(body))
+	a.tracef("REQ", prettyJSON(redactDataURLs(body)))
 
 	// Rate gate: consulted ONCE per Complete, before the retry loop. It gates a
 	// logical request, not a transport attempt — charging each retry would double-
@@ -512,7 +548,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	// Report then charges only the delta (actuals − estTokens) so this estimate is
 	// not double-counted; a caller passing 0 (unreserved) is charged the full
 	// actuals by Report exactly as before.
-	estTokens := len(body) / 4
+	// Image bytes are excluded and each image costs AttachmentTokenEstimate
+	// instead, or a 1 MB image would reserve about 330k tokens.
+	estTokens := (len(body)-b64Bytes)/4 + nImages*AttachmentTokenEstimate
 	if a.gate != nil {
 		if err := a.gate.Wait(ctx, req.Model, estTokens); err != nil {
 			return CompletionResp{}, err
@@ -569,9 +607,20 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	// model, how big the request was, how many attempts, how long. A bare
 	// "timeout awaiting response headers" is undiagnosable after the fact.
 	finalErr := fmt.Errorf("model %s: %d attempt(s) failed over %s (payload %dKB, ~%dk tokens est): %w",
-		req.Model, attempts, time.Since(start).Round(time.Second), len(body)>>10, len(body)/4/1000, lastErr)
+		req.Model, attempts, time.Since(start).Round(time.Second), len(body)>>10, estTokens/1000, lastErr)
 	a.tracef("ERROR", []byte(finalErr.Error()))
 	return CompletionResp{}, finalErr
+}
+
+var dataURLRe = regexp.MustCompile(`data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)`)
+
+// redactDataURLs replaces each base64 data URL in a request body with a marker
+// of its size, so traces never hold image bytes. The body sent is unchanged.
+func redactDataURLs(b []byte) []byte {
+	return dataURLRe.ReplaceAllFunc(b, func(m []byte) []byte {
+		sub := dataURLRe.FindSubmatch(m)
+		return fmt.Appendf(nil, "data:%s;base64,<elided %d bytes>", sub[1], len(sub[2]))
+	})
 }
 
 // retryDelay is the jittered wait before the retry after attempt: half the doubled
@@ -641,7 +690,7 @@ func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools
 		return empty
 	}
 	a.tracef("RETRY", []byte("empty streamed reply; asking again without streaming"))
-	a.tracef("REQ", prettyJSON(body))
+	a.tracef("REQ", prettyJSON(redactDataURLs(body)))
 	resp, err, _ := a.completeOnce(ctx, body, tools)
 	if err != nil {
 		a.tracef("ERROR", []byte(err.Error()))

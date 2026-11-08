@@ -27,6 +27,10 @@ type Result struct {
 	// DenyLayer, set only when Denied, names the gate pipeline layer that denied
 	// (permissions.Layer* constants, e.g. "rules", "classifier", "valve").
 	DenyLayer string
+	// Attachments are images delivered with the result (read_file on a PNG).
+	// Only set on success. spillOutput touches Output only, so they pass through
+	// Execute unchanged; the panic path drops them.
+	Attachments []model.Attachment
 }
 
 // Tool is a single named, schema-described, executable capability.
