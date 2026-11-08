@@ -100,7 +100,7 @@ func (anthropicDialect) prepare(req *wireReq) {
 	marked := 0
 	for i := len(req.Messages) - 1; i >= 0 && marked < anthropicHistoryMarks; i-- {
 		m := &req.Messages[i]
-		if (m.Role == "user" || m.Role == "tool") && m.Content != "" {
+		if (m.Role == "user" || m.Role == "tool") && (m.Content != "" || len(m.images) > 0) {
 			m.markCacheBreakpoint()
 			marked++
 		}

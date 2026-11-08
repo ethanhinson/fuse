@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/ethanhinson/fuse/internal/archive"
+	"github.com/ethanhinson/fuse/internal/artifact"
+	"github.com/ethanhinson/fuse/internal/model"
 )
 
 type readTool struct{}
@@ -42,7 +46,8 @@ func (readTool) Description() string {
 	return "Read a file's contents with 1-based inclusive line ranges. " +
 		"Without end_line, up to 1000 lines (16 KB) from start_line (default 1) are returned; the footer says how to continue. " +
 		"Prefer grep to locate, then read just the ranges you need. " +
-		"path may also be an art:// artifact ref (e.g. from a spilled-output marker)."
+		"path may also be an art:// artifact ref (e.g. from a spilled-output marker)." +
+		" An image file (PNG, JPEG, GIF or WebP) is attached so you can see it, when this model accepts images."
 }
 
 func (readTool) Parameters() map[string]any {
@@ -74,7 +79,12 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	if handled {
-		return renderRead(ctx, a.Path, bytes.NewReader(data), int64(len(data)), a)
+		br := bufio.NewReaderSize(bytes.NewReader(data), readChunkBytes)
+		head, _ := br.Peek(512)
+		if mime, _ := imageType(head); mime != "" {
+			return readImage(ctx, a.Path, br, int64(len(data)), mime, true)
+		}
+		return renderRead(ctx, a.Path, br, int64(len(data)), a)
 	}
 	// Transparent decompression: a ".gz" (or a bare path whose file is now a
 	// "<path>.gz" archive) is gunzipped so the model's generic read_file keeps
@@ -85,7 +95,14 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	defer r.Close()
-	res := renderRead(ctx, a.Path, r, size, a)
+	br := bufio.NewReaderSize(r, readChunkBytes)
+	var res Result
+	head, _ := br.Peek(512)
+	if mime, _ := imageType(head); mime != "" {
+		res = readImage(ctx, a.Path, br, size, mime, false)
+	} else {
+		res = renderRead(ctx, a.Path, br, size, a)
+	}
 
 	// Track the read in the file tracker for filesystem paths (not art:// refs).
 	// Only track successful reads: errors mean the content was not delivered.
@@ -93,7 +110,7 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 		if ft := FileTrackerFrom(ctx); ft != nil {
 			// A read is "full" when no range was specified. A partial read does NOT
 			// authorize overwrite but DOES count for the edit_file staleness check.
-			full := a.StartLine == 0 && a.EndLine == 0
+			full := a.StartLine == 0 && a.EndLine == 0 || len(res.Attachments) > 0
 			if canonical, err := resolvePath(a.Path); err == nil {
 				if fi, statErr := os.Stat(canonical); statErr == nil {
 					ft.MarkRead(canonical, full, fi.ModTime(), fi.Size())
@@ -277,4 +294,52 @@ scan:
 		out += fmt.Sprintf("\n(Showing lines %d-%d of %d. Use start_line=%d to continue.)", start, shown, line, shown+1)
 	}
 	return Result{Output: out}
+}
+
+// readImage answers a read_file of an image: the picture as an attachment when
+// the model accepts images, else a text result saying why not. fromArtifact marks
+// a source that is already a stored attachment, which is not stored twice.
+func readImage(ctx context.Context, path string, br *bufio.Reader, size int64, mime string, fromArtifact bool) Result {
+	if _, ok := imageSupported(mime); !ok {
+		return Result{IsError: true, Output: unsupportedImageErr(path, mime).Error()}
+	}
+	if !AttachmentsAllowed(ctx) {
+		head, _ := br.Peek(512)
+		detail := ""
+		if mime != "image/webp" {
+			if cfg, _, err := image.DecodeConfig(bytes.NewReader(head)); err == nil {
+				detail = fmt.Sprintf("%dx%d pixels, ", cfg.Width, cfg.Height)
+			}
+		}
+		if size >= 0 {
+			detail += formatSize(int(size))
+		} else {
+			detail = strings.TrimSuffix(detail, ", ")
+		}
+		desc := imageKind(mime) + " image"
+		if detail != "" {
+			desc += " (" + detail + ")"
+		}
+		return Result{IsError: true, Output: fmt.Sprintf(
+			"%s is a %s. This model cannot view images, so it was not attached; inspect it with bash instead (e.g. python3 with PIL), or use a model that accepts attachments.",
+			path, desc)}
+	}
+	att, err := LoadAttachment(path, br, mime)
+	if err != nil {
+		return Result{IsError: true, Output: err.Error()}
+	}
+	if fromArtifact {
+		att.Ref = path
+	} else if b, ok := artifact.BindingFrom(ctx); ok {
+		storeAttachment(ctx, b, &att)
+	}
+	dims := ""
+	if att.Width > 0 {
+		dims = fmt.Sprintf("%dx%d pixels, ", att.Width, att.Height)
+	}
+	out := fmt.Sprintf("%s: %s image, %s%s. Attached for you to view.", path, imageKind(mime), dims, formatSize(att.Size))
+	if att.Ref != "" {
+		out += " Saved as " + att.Ref + "."
+	}
+	return Result{Output: out, Attachments: []model.Attachment{att}}
 }

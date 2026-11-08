@@ -99,12 +99,19 @@ func (a *Agent) historyMessage(resp model.CompletionResp) model.Message {
 func messagesSize(msgs []model.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += len(m.Content) + len(m.Reasoning)
+		total += len(m.Content) + len(m.Reasoning) + len(m.Attachments)*model.AttachmentTokenEstimate*bytesPerToken
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Arguments)
 		}
 	}
 	return total
+}
+
+// toolResultTokens is a tool result's estimated cost: its text plus each live
+// attachment. Prune, summarization and the protected-tail walk all use it so they
+// agree.
+func toolResultTokens(m model.Message) int {
+	return len(m.Content)/bytesPerToken + len(m.Attachments)*model.AttachmentTokenEstimate
 }
 
 // pruneOldToolResults stubs tool results outside the protected budget and
@@ -144,7 +151,7 @@ func pruneOldToolResults(messages []model.Message, protectTokens int, scorer Rel
 		if m.Role != "tool" || m.Content == prunedStub {
 			continue
 		}
-		cands = append(cands, cand{idx: i, tok: len(m.Content) / bytesPerToken})
+		cands = append(cands, cand{idx: i, tok: toolResultTokens(m)})
 	}
 	if len(cands) == 0 {
 		return pruneOldToolArgs(messages)
@@ -205,6 +212,7 @@ func pruneOldToolResults(messages []model.Message, protectTokens int, scorer Rel
 		}
 		freed += c.tok
 		messages[c.idx].Content = prunedStub
+		messages[c.idx].Attachments = nil
 	}
 	return freed + pruneOldToolArgs(messages)
 }
@@ -233,7 +241,7 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 		if m.Role != "tool" || m.Content == prunedStub {
 			continue
 		}
-		tok := len(m.Content) / bytesPerToken
+		tok := toolResultTokens(m)
 		if seen < protectTokens {
 			seen += tok
 			continue
@@ -256,7 +264,7 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 		if m.Role != "tool" || m.Content == prunedStub {
 			continue
 		}
-		tok := len(m.Content) / bytesPerToken
+		tok := toolResultTokens(m)
 		// A message is unprotected iff it is not within the protected tail. Recompute
 		// membership: everything from the tail inward up to protectTokens is protected.
 		if isProtected(messages, i, protectTokens) {
@@ -334,7 +342,7 @@ func isProtected(messages []model.Message, i, protectTokens int) bool {
 		if m.Role != "tool" || m.Content == prunedStub {
 			continue
 		}
-		tok := len(m.Content) / bytesPerToken
+		tok := toolResultTokens(m)
 		if seen < protectTokens {
 			if j == i {
 				return true
@@ -388,7 +396,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// purely from events includes them.
 	for _, m := range history {
 		if m.Role == "user" {
-			a.emit(event.KindUserInput, 0, event.UserInputPayload{Turn: 0, Content: m.Content})
+			a.emit(event.KindUserInput, 0, event.UserInputPayload{Turn: 0, Content: m.Content, Attachments: attachmentRefs(m.Attachments)})
 		}
 	}
 	detector := newLoopDetector(loopLimit)
@@ -465,6 +473,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
+		evictOldAttachments(messages, maxLiveAttachments)
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
 		if estimate > budget {
 			// Tier 2 (change 0027): before the deterministic stub prune, run a
@@ -581,6 +590,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			ReasoningEffort: a.ReasoningEffort,
 			ReplayReasoning: a.ReplayReasoning,
 			Dialect:         a.Dialect,
+			Attachments:     a.Attachments,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
@@ -1050,18 +1060,20 @@ func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Mes
 		a.renderer.ToolResult(r.call.Name, r.res)
 		// tool.result (change 0043): full result output + error flag, per call.
 		a.emit(event.KindToolResult, turn, event.ToolResultPayload{
-			ID:      r.call.ID,
-			Name:    r.call.Name,
-			Result:  r.res.Output,
-			IsError: r.res.IsError,
+			ID:          r.call.ID,
+			Name:        r.call.Name,
+			Result:      r.res.Output,
+			IsError:     r.res.IsError,
+			Attachments: attachmentRefs(r.res.Attachments),
 		})
 		// Output is already spill-bounded by the tool registry; history and
 		// display see the same recoverable form.
 		msgs = append(msgs, model.Message{
-			Role:       "tool",
-			ToolCallID: r.call.ID,
-			Name:       r.call.Name,
-			Content:    r.res.Output,
+			Role:        "tool",
+			ToolCallID:  r.call.ID,
+			Name:        r.call.Name,
+			Content:     r.res.Output,
+			Attachments: r.res.Attachments,
 		})
 	}
 	return msgs, results
@@ -1093,6 +1105,9 @@ func userTurns(msgs []model.Message) []model.Message {
 // returned to the model describing what happened; the underlying goroutine is
 // left to observe cancellation on its own rather than blocking the loop.
 func (a *Agent) executeToolBounded(ctx context.Context, turn int, call model.ToolCall) (result tools.Result) {
+	// Tell the tools whether this model accepts images, so read_file attaches
+	// them only when it can.
+	ctx = tools.WithAttachments(ctx, a.Attachments)
 	// Install the per-call permission decision sink (change 0067): the gate
 	// reports every resolution (allow/ask/deny + deciding layer) through it, and
 	// this closure — which alone knows the tool-call ID and turn — emits it as a

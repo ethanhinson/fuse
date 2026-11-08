@@ -518,6 +518,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a.ReasoningEffort = mc.ReasoningEffort
 	a.ReplayReasoning = !mc.DropReasoning
 	a.Dialect = mc.Dialect
+	a.Attachments = mc.AcceptsAttachments()
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
@@ -750,6 +751,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a.ReasoningEffort = mc.ReasoningEffort
 	a.ReplayReasoning = !mc.DropReasoning
 	a.Dialect = mc.Dialect
+	a.Attachments = mc.AcceptsAttachments()
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)

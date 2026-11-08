@@ -26,11 +26,21 @@ func Registry(cfg config.Config) *model.Registry {
 			ID: mc.ID, MaxTokens: mc.MaxTokens, MaxTokensCeiling: mc.MaxTokensCeiling, ContextWindow: mc.ContextWindow,
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix, ReasoningEffort: mc.ReasoningEffort,
 			DropReasoning: mc.ReplayReasoning != nil && !*mc.ReplayReasoning, Dialect: mc.Dialect,
-			Label: mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
+			Attachments: cloneBool(mc.Attachments),
+			Label:       mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
 			Hidden: mc.Advertise != nil && !*mc.Advertise,
 		})
 	}
 	return reg
+}
+
+// cloneBool copies an optional flag so the registry never aliases config memory.
+func cloneBool(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 // ModelRefProblems checks that every model alias referenced in cfg resolves in

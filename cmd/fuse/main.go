@@ -12,6 +12,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -104,6 +105,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
 	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run, also for a cli/ model's tool subprocess - a deliberate footgun)")
 	taskFile := fs.String("task-file", "", "read the task from this file instead of the command line, keeping it out of the process list (- = stdin)")
+	var attachPaths []string
+	fs.Func("attach", "attach an image to the task (PNG, JPEG, GIF or WebP; repeatable; the model must accept attachments)", func(s string) error {
+		attachPaths = append(attachPaths, s)
+		return nil
+	})
 	maxRunDuration := fs.Duration("max-run-duration", cfg.MaxRunDuration, "stop the run with a nonzero exit after this long, e.g. 30m (0 = no limit; default: max_run_duration from the home config)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -129,7 +135,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		task = rest[0]
 	default:
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--max-run-duration D] (\"<task>\" | --task-file FILE)")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--attach FILE]... [--max-run-duration D] (\"<task>\" | --task-file FILE)")
 		return 2
 	}
 
@@ -141,6 +147,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// with models.default set (change 0073).
 	if *modelAlias == "" {
 		*modelAlias = reg.Default
+	}
+
+	var attachments []model.Attachment
+	if len(attachPaths) > 0 {
+		if mc, err := reg.Resolve(*modelAlias); err == nil && !mc.AcceptsAttachments() {
+			fmt.Fprintf(stderr, "model %s (%s) does not accept attachments; set attachments: true on its config entry if it does\n", *modelAlias, mc.ID)
+			return 2
+		}
+		for _, p := range attachPaths {
+			att, err := tools.LoadAttachmentFile(p)
+			if err != nil {
+				fmt.Fprintf(stderr, "--attach: %v\n", err)
+				return 2
+			}
+			attachments = append(attachments, att)
+		}
 	}
 
 	var traceW io.Writer
@@ -238,7 +260,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
 	rt := runtime.New(deps)
-	h, err := rt.StartLoop(stop.ctx, runtime.LoopConfig{Task: task, ModelID: *modelAlias})
+	h, err := rt.StartLoop(stop.ctx, runtime.LoopConfig{Task: task, ModelID: *modelAlias, Attachments: attachments})
 	if err != nil {
 		// StartLoop failed before the completion goroutine (which runs LoopTeardown) could
 		// launch, so close the one-shot MCP manager here or its dialed servers +

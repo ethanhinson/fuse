@@ -18,6 +18,34 @@ type Message struct {
 	// uses; empty means reasoning_content.
 	Reasoning      string
 	ReasoningField string
+	// Attachments are images sent with this message's text (a user message, or
+	// a tool result such as read_file on a PNG).
+	Attachments []Attachment
+}
+
+// AttachmentTokenEstimate is the planning cost of one image in tokens. Providers
+// differ widely: Gemini charged about 1,100 prompt tokens for a 32x32 image,
+// Haiku and Kimi a few. 1,600 is Anthropic's cost at its 1568 px auto-resize
+// ceiling, a safe estimate for context accounting and the rate gate.
+const AttachmentTokenEstimate = 1600
+
+// Attachment is an image sent to the model with a message's text.
+type Attachment struct {
+	MediaType     string // image/png | image/jpeg | image/gif | image/webp
+	Data          []byte `json:"-"` // raw bytes; empty means not sendable (see adapter)
+	Name          string // path as given by the model or user
+	Ref           string // art://.../attachment/<id>, "" when not stored
+	Size          int
+	SHA256        string // hex of Data
+	Width, Height int    // 0 when unknown (WebP)
+}
+
+// Label is how text refers to the attachment: Ref when stored, else Name.
+func (a Attachment) Label() string {
+	if a.Ref != "" {
+		return a.Ref
+	}
+	return a.Name
 }
 
 // ToolCall is a function call requested by the model. Arguments is the raw
@@ -54,6 +82,10 @@ type CompletionReq struct {
 	// Dialect names the model family's request additions (see dialect.go). Empty
 	// detects it from Model.
 	Dialect string
+	// Attachments reports whether the model accepts images. When false the
+	// adapter sends no image parts and each attachment goes as a text note, so a
+	// text-only model never receives image bytes.
+	Attachments bool
 }
 
 // CompletionResp is the assistant's reply.

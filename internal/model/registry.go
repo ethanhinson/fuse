@@ -2,7 +2,9 @@ package model
 
 import (
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 )
 
 // ModelConfig is a resolved model entry inside the registry.
@@ -25,6 +27,9 @@ type ModelConfig struct {
 	// Dialect is the configured model family (config `dialect:`); empty detects
 	// it from ID.
 	Dialect string
+	// Attachments is the configured image-input capability (config
+	// `attachments:`); nil detects it (see AcceptsAttachments).
+	Attachments *bool
 	// Operator display metadata shown by the model listings; nothing else
 	// reads it.
 	Label       string
@@ -33,6 +38,27 @@ type ModelConfig struct {
 	// Hidden comes from config `advertise: false`. Its zero value means
 	// advertised, so DefaultRegistry needs no change.
 	Hidden bool
+}
+
+// AcceptsAttachments reports whether the model takes image attachments. A cli/
+// model never does (the CLI adapter has no image path). Otherwise an explicit
+// `attachments:` wins; unset, a model accepts them when it is tagged "vision" or
+// its dialect is anthropic (every Claude model since 3 accepts images).
+func (mc ModelConfig) AcceptsAttachments() bool {
+	if strings.HasPrefix(mc.ID, "cli/") {
+		return false
+	}
+	if mc.Attachments != nil {
+		return *mc.Attachments
+	}
+	if slices.Contains(mc.Tags, "vision") {
+		return true
+	}
+	d := mc.Dialect
+	if !IsDialect(d) {
+		d = DetectDialect(mc.ID)
+	}
+	return d == DialectAnthropic
 }
 
 // Registry maps model aliases to their resolved gateway configuration.

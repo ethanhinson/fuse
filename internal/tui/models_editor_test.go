@@ -332,3 +332,36 @@ func TestToConfigModelKeepsDialect(t *testing.T) {
 		t.Fatalf("dialect lost on save: %q", got.Dialect)
 	}
 }
+
+func TestToConfigModelKeepsAttachments(t *testing.T) {
+	on := true
+	got := toConfigModel(model.ModelConfig{ID: "proxy/x", Attachments: &on})
+	if got.Attachments == nil || !*got.Attachments {
+		t.Fatalf("attachments lost on save: %v", got.Attachments)
+	}
+	if toConfigModel(model.ModelConfig{ID: "proxy/x"}).Attachments != nil {
+		t.Fatal("unset attachments became set")
+	}
+}
+
+func TestModelsEditorPreservesAttachments(t *testing.T) {
+	off := false
+	reg := model.NewRegistry("alpha", map[string]model.ModelConfig{
+		"alpha": {ID: "prov/alpha"},
+		"beta":  {ID: "claude/beta", Attachments: &off},
+	})
+	m := editorShell(t, reg)
+	next, _ := m.openModelsEditor()
+	m = next.(ShellModel)
+	m = keyStr(m, "j")
+	m = keyStr(m, "e")
+	for range "claude/beta" {
+		m = key(m, tea.KeyBackspace)
+	}
+	m = typeRunes(m, "claude/beta2")
+	m = key(m, tea.KeyEnter)
+	mc, _ := reg.Resolve("beta")
+	if mc.ID != "claude/beta2" || mc.Attachments == nil || *mc.Attachments {
+		t.Errorf("attachments lost on edit: %+v", mc)
+	}
+}
