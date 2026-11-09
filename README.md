@@ -337,6 +337,13 @@ A streamed reply with no text and no tool call gets one retry without streaming,
 some gateway routes end a reasoning stream early. If replies stay empty, the agent asks
 twice more and then the run fails with a nonzero exit.
 
+### Model dialects
+
+A model family's wire behaviour (Anthropic cache marks, image input, XML tool-call
+recovery) lives in a dialect, picked by `dialect:` or detected from the model ID.
+`dialect_options:` tunes it per model: `cache_markers`, `reasoning_field` and
+`recover_tool_calls`. See [docs/model-dialects.md](docs/model-dialects.md).
+
 ### The `instructions` config key
 
 ```yaml

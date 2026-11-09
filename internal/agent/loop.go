@@ -590,6 +590,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			ReasoningEffort: a.ReasoningEffort,
 			ReplayReasoning: a.ReplayReasoning,
 			Dialect:         a.Dialect,
+			DialectOptions:  a.DialectOptions,
 			Attachments:     a.Attachments,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.

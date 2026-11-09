@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -111,6 +112,12 @@ func (c Config) Problems() []Problem {
 		}
 		if m.Dialect != "" && !model.IsDialect(m.Dialect) {
 			add("models."+alias+".dialect", "must be one of %s (or empty to detect it from the id), got %q", strings.Join(model.DialectNames(), ", "), m.Dialect)
+		}
+		for _, k := range m.DialectOptions.unknown {
+			add("models."+alias+".dialect_options."+k, "is not a dialect option (want %s)", wantList(dialectOptionKeys))
+		}
+		if f := m.DialectOptions.ReasoningField; f != "" && !slices.Contains(model.ReasoningFields(), f) {
+			add("models."+alias+".dialect_options.reasoning_field", "must be %s (or empty to replay reasoning in the field it arrived in), got %q", wantList(model.ReasoningFields()), f)
 		}
 	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {
@@ -233,4 +240,12 @@ func validateObservability(o ObservabilityConfig) error {
 		}
 	}
 	return nil
+}
+
+// wantList joins names as "a, b or c".
+func wantList(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
