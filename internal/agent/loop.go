@@ -473,7 +473,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
-		evictOldAttachments(messages, maxLiveAttachments)
+		evictOldAttachments(messages, MaxLiveAttachments)
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
 		if estimate > budget {
 			// Tier 2 (change 0027): before the deterministic stub prune, run a

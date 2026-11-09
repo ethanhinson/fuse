@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/png"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/artifact"
+	"github.com/ethanhinson/fuse/internal/model"
 )
 
 func writePNG(t *testing.T, dir, name string) (string, []byte) {
@@ -194,5 +196,48 @@ func TestLoadAttachmentFile(t *testing.T) {
 	att, err := LoadAttachmentFile(ok)
 	if err != nil || att.Name != ok || att.Width != 2 {
 		t.Errorf("ok: %+v %v", att, err)
+	}
+}
+
+func TestLoadAttachmentBytes(t *testing.T) {
+	_, data := writePNG(t, t.TempDir(), "sq.png")
+	att, err := LoadAttachmentBytes("clipboard", data)
+	if err != nil || att.Name != "clipboard" || att.MediaType != "image/png" || att.Width != 2 {
+		t.Fatalf("%+v %v", att, err)
+	}
+	_, err = LoadAttachmentBytes("clipboard", []byte("just text"))
+	var ni *NotImageError
+	if !errors.As(err, &ni) {
+		t.Fatalf("err = %v, want NotImageError", err)
+	}
+	_, err = LoadAttachmentBytes("clipboard", append(pngHeader(2, 2, 0), make([]byte, MaxAttachmentBytes)...))
+	if err == nil || !strings.Contains(err.Error(), "3.5 MB") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNotImageErrorText(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "n.txt")
+	os.WriteFile(p, []byte("hello"), 0o644)
+	_, err := LoadAttachmentFile(p)
+	want := p + " is not a PNG, JPEG, GIF or WebP image"
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+	var ni *NotImageError
+	if !errors.As(err, &ni) || ni.Path != p {
+		t.Fatalf("not a NotImageError: %v", err)
+	}
+}
+
+func TestAttachmentSummary(t *testing.T) {
+	_, data := writePNG(t, t.TempDir(), "sq.png")
+	att, _ := LoadAttachmentBytes("x", data)
+	if got, want := AttachmentSummary(att), "PNG 2x2, "+formatSize(len(data)); got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	w := model.Attachment{MediaType: "image/webp", Size: 12 << 10}
+	if got := AttachmentSummary(w); got != "WebP, 12.0 KB" {
+		t.Errorf("got %q", got)
 	}
 }

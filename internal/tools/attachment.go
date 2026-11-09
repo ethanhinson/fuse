@@ -137,21 +137,49 @@ func LoadAttachmentFile(path string) (model.Attachment, error) {
 	}
 	mime, _ := imageType(head)
 	if mime == "" {
-		return model.Attachment{}, fmt.Errorf("%s is not a PNG, JPEG, GIF or WebP image", path)
+		return model.Attachment{}, &NotImageError{Path: path}
 	}
 	return LoadAttachment(path, br, mime)
 }
 
-// storeAttachment puts att.Data in the loop's artifact store so an evicted image
+// NotImageError reports that a file or byte slice is not a PNG, JPEG, GIF or
+// WebP image (nor any other recognised image type).
+type NotImageError struct{ Path string }
+
+func (e *NotImageError) Error() string {
+	return fmt.Sprintf("%s is not a PNG, JPEG, GIF or WebP image", e.Path)
+}
+
+// LoadAttachmentBytes loads an in-memory image (for example from the clipboard).
+// name is used in messages.
+func LoadAttachmentBytes(name string, data []byte) (model.Attachment, error) {
+	mime, _ := imageType(data)
+	if mime == "" {
+		return model.Attachment{}, &NotImageError{Path: name}
+	}
+	return LoadAttachment(name, bytes.NewReader(data), mime)
+}
+
+// AttachmentSummary describes a loaded image for display, e.g. "PNG 96x32, 1.2 KB".
+// Without dimensions (WebP) it is "WebP, 12.0 KB".
+func AttachmentSummary(a model.Attachment) string {
+	kind := imageKind(a.MediaType)
+	if a.Width > 0 {
+		kind += fmt.Sprintf(" %dx%d", a.Width, a.Height)
+	}
+	return kind + ", " + formatSize(a.Size)
+}
+
+// StoreAttachment puts att.Data in the loop's artifact store so an evicted image
 // can be reopened by ref, and sets att.Ref on success. A failure leaves Ref empty:
 // the attachment still goes to the model, it just cannot be reopened by ref.
-func storeAttachment(ctx context.Context, b artifact.Binding, att *model.Attachment) {
+func StoreAttachment(ctx context.Context, b artifact.Binding, att *model.Attachment, tool string) {
 	if !b.Valid() {
 		return
 	}
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), attachPutTimeout)
 	defer cancel()
-	meta, err := b.Put(pctx, artifact.KindAttachment, bytes.NewReader(att.Data), artifact.Meta{Tool: "read_file"})
+	meta, err := b.Put(pctx, artifact.KindAttachment, bytes.NewReader(att.Data), artifact.Meta{Tool: tool})
 	if err != nil {
 		return
 	}

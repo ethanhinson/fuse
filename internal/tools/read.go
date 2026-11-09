@@ -331,7 +331,7 @@ func readImage(ctx context.Context, path string, br *bufio.Reader, size int64, m
 	if fromArtifact {
 		att.Ref = path
 	} else if b, ok := artifact.BindingFrom(ctx); ok {
-		storeAttachment(ctx, b, &att)
+		StoreAttachment(ctx, b, &att, "read_file")
 	}
 	dims := ""
 	if att.Width > 0 {

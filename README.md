@@ -447,6 +447,17 @@ agent's next step. `/interrupt MESSAGE` cancels what the agent is doing right no
 call or the running command) so the message lands at once. Steps the agent had not started
 yet are skipped, and every tool call still gets a result, so the conversation stays valid.
 
+## Images in the shell
+
+In `fuse shell` you can give a vision-capable model an image (PNG, JPEG, GIF or WebP, up to 3.5 MB).
+Drag a file onto the terminal, press **Ctrl+V** to attach an image from the clipboard (a screenshot,
+for example; macOS and Linux with `wl-paste` or `xclip`), or run `/attach PATH...`. Each image
+becomes an `[Image #N]` placeholder in the input, and the images whose placeholders are still there
+when you press Enter go with that message (at most 4). Backspace removes a whole placeholder. A model
+that does not accept images never gets the bytes: it is told so when you attach, and Enter is refused
+while placeholders remain. Whether a model accepts images is the `attachments:` key on its config
+entry (see `docs/model-dialects.md`).
+
 ## MCP servers
 
 The shell and one-shot runs attach the MCP servers in `mcp_servers`, and their tools are
