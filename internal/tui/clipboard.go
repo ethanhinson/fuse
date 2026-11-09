@@ -133,16 +133,50 @@ func (c *systemClipboard) Read(ctx context.Context) (clipboardContent, error) {
 	return clipboardContent{}, errClipboardUnsupported
 }
 
-func (c *systemClipboard) readDarwin(ctx context.Context) (clipboardContent, error) {
-	// A Finder copy comes first: it can also carry the file's icon as image data.
-	out, err := c.runT(ctx, "osascript", "-e", "POSIX path of (the clipboard as «class furl»)")
-	switch {
-	case err == nil:
-		if p := strings.TrimSpace(string(out)); p != "" {
-			return clipboardContent{Paths: []string{p}}, nil
+// darwinFileTypes and darwinImageTypes are `clipboard info` entries that mark
+// a copied file and image data. AppleScript coerces plain text to a file URL
+// ("the clipboard as «class furl»" on "hello" gives /hello), so the reader asks
+// which types are present before coercing anything.
+var (
+	darwinFileTypes  = []string{"«class furl»", "alias"}
+	darwinImageTypes = []string{"«class PNGf»", "TIFF picture", "JPEG picture", "GIF picture"}
+)
+
+// clipboardHas reports whether a `clipboard info` listing ("«class utf8», 24,
+// string, 24, ...") holds any of types as an entry name.
+func clipboardHas(info string, types []string) bool {
+	for _, entry := range strings.Split(info, ",") {
+		entry = strings.TrimSpace(entry)
+		for _, t := range types {
+			if entry == t {
+				return true
+			}
 		}
-	case !notThisType(err):
+	}
+	return false
+}
+
+func (c *systemClipboard) readDarwin(ctx context.Context) (clipboardContent, error) {
+	out, err := c.runT(ctx, "osascript", "-e", "clipboard info")
+	if err != nil {
 		return clipboardContent{}, err
+	}
+	info := string(out)
+
+	// A Finder copy comes first: it can also carry the file's icon as image data.
+	if clipboardHas(info, darwinFileTypes) {
+		out, err := c.runT(ctx, "osascript", "-e", "POSIX path of (the clipboard as «class furl»)")
+		switch {
+		case err == nil:
+			if p := strings.TrimSpace(string(out)); p != "" {
+				return clipboardContent{Paths: []string{p}}, nil
+			}
+		case !notThisType(err):
+			return clipboardContent{}, err
+		}
+	}
+	if !clipboardHas(info, darwinImageTypes) {
+		return c.darwinText(ctx)
 	}
 
 	dir, err := os.MkdirTemp(c.tempDir, "fuse-clip-*")
@@ -167,7 +201,11 @@ func (c *systemClipboard) readDarwin(ctx context.Context) (clipboardContent, err
 		return clipboardContent{}, err
 	}
 
-	out, err = c.runT(ctx, "pbpaste")
+	return c.darwinText(ctx)
+}
+
+func (c *systemClipboard) darwinText(ctx context.Context) (clipboardContent, error) {
+	out, err := c.runT(ctx, "pbpaste")
 	if err != nil {
 		return clipboardContent{}, err
 	}

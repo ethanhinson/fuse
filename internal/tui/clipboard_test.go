@@ -91,10 +91,18 @@ func noClipTemp(t *testing.T, dir string) {
 	}
 }
 
+// clipboard info listings as macOS reports them.
+const (
+	infoScreenshot = "«class PNGf», 415, «class AVIF», 422, TIFF picture, 60950, «class BMP », 57654"
+	infoFinderCopy = "«class furl», 61, «class icns», 3184, TIFF picture, 9406, «class utf8», 12"
+	infoAlias      = "alias, 476"
+	infoText       = "«class utf8», 24, «class ut16», 50, string, 24, Unicode text, 48"
+)
+
 func TestClipboardDarwinScreenshot(t *testing.T) {
 	data := pngFixture(t)
 	f := &fakeRun{rules: []fakeRule{
-		{prefix: "osascript -e POSIX path", err: errNotType},
+		{prefix: "osascript -e clipboard info", out: infoScreenshot},
 		{prefix: "osascript -e on run argv", write: data},
 	}}
 	c, dir := newFakeClipboard("darwin", nil, nil, f)
@@ -103,25 +111,35 @@ func TestClipboardDarwinScreenshot(t *testing.T) {
 	if err != nil || !bytes.Equal(got.Data, data) {
 		t.Fatalf("got %+v err %v", got, err)
 	}
+	if f.called("osascript -e POSIX path") {
+		t.Error("image data must not be coerced to a file URL")
+	}
 	noClipTemp(t, dir)
 }
 
 func TestClipboardDarwinFinderFile(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{{prefix: "osascript -e POSIX path", out: "/x/a.png\n"}}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || !reflect.DeepEqual(got.Paths, []string{"/x/a.png"}) {
-		t.Fatalf("got %+v err %v", got, err)
-	}
-	if f.called("osascript -e on run") {
-		t.Error("PNGf must not be tried after a Finder file")
+	for name, info := range map[string]string{"furl": infoFinderCopy, "alias": infoAlias} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeRun{rules: []fakeRule{
+				{prefix: "osascript -e clipboard info", out: info},
+				{prefix: "osascript -e POSIX path", out: "/x/a.png\n"},
+			}}
+			c, dir := newFakeClipboard("darwin", nil, nil, f)
+			defer os.RemoveAll(dir)
+			got, err := c.Read(t.Context())
+			if err != nil || !reflect.DeepEqual(got.Paths, []string{"/x/a.png"}) {
+				t.Fatalf("got %+v err %v", got, err)
+			}
+			if f.called("osascript -e on run") {
+				t.Error("PNGf must not be tried after a Finder file")
+			}
+		})
 	}
 }
 
 func TestClipboardDarwinTextOnly(t *testing.T) {
 	f := &fakeRun{rules: []fakeRule{
-		{prefix: "osascript", err: errNotType},
+		{prefix: "osascript -e clipboard info", out: infoText},
 		{prefix: "pbpaste", out: "hi"},
 	}}
 	c, dir := newFakeClipboard("darwin", nil, nil, f)
@@ -131,6 +149,26 @@ func TestClipboardDarwinTextOnly(t *testing.T) {
 		t.Fatalf("got %+v err %v", got, err)
 	}
 	noClipTemp(t, dir)
+}
+
+// Live, Ctrl+V with "hello from the clipboard" on the clipboard tried to open
+// "/hello from the clipboard": AppleScript coerces text to a file URL. Text must
+// stay text, so the file coercion is never attempted without a file type.
+func TestClipboardDarwinTextIsNotReadAsAFile(t *testing.T) {
+	f := &fakeRun{rules: []fakeRule{
+		{prefix: "osascript -e clipboard info", out: infoText},
+		{prefix: "osascript -e POSIX path", out: "/hello from the clipboard\n"},
+		{prefix: "pbpaste", out: "hello from the clipboard"},
+	}}
+	c, dir := newFakeClipboard("darwin", nil, nil, f)
+	defer os.RemoveAll(dir)
+	got, err := c.Read(t.Context())
+	if err != nil || len(got.Paths) != 0 || got.Text != "hello from the clipboard" {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	if f.called("osascript -e POSIX path") || f.called("osascript -e on run") {
+		t.Errorf("text clipboard was coerced: %v", f.calls)
+	}
 }
 
 func TestClipboardDarwinOtherErrorSurfaces(t *testing.T) {
