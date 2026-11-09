@@ -1,0 +1,159 @@
+RESPONSE:
+{
+  "Content": "7",
+  "ToolCalls": null,
+  "InputTokens": 0,
+  "CachedTokens": 0,
+  "CacheWrite": 0,
+  "OutputTokens": 0,
+  "ReasoningTokens": 0,
+  "Reasoning": "Think hard.",
+  "ReasoningField": "reasoning_text",
+  "FinishReason": "stop"
+}
+REQUESTS: 1
+BODY 0:
+{"model":"cloud/claude-haiku-5.5","messages":[{"role":"system","content":[{"type":"text","text":"be useful","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"fix the bug"},{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"role":"tool","tool_call_id":"a","name":"bash","content":[{"type":"text","text":"main.go","cache_control":{"type":"ephemeral"}}]},{"role":"assistant","content":"","tool_calls":[{"id":"b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}}]},{"role":"tool","content":"","tool_call_id":"b","name":"bash"},{"role":"user","content":[{"type":"text","text":"keep going","cache_control":{"type":"ephemeral"}}]}],"tools":[{"type":"function","function":{"name":"read_file","description":"read a file","parameters":{"properties":{"path":{"type":"string"}},"type":"object"}}},{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"properties":{"content":{"type":"string"},"path":{"type":"string"}},"type":"object"}}}],"max_tokens":1024,"stream":true,"stream_options":{"include_usage":true}}
+TRACE:
+
+── REQ ──
+{
+  "model": "cloud/claude-haiku-5.5",
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "be useful",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "fix the bug"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "a",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"ls\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "a",
+      "name": "bash",
+      "content": [
+        {
+          "type": "text",
+          "text": "main.go",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "b",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"true\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "",
+      "tool_call_id": "b",
+      "name": "bash"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "keep going",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "read a file",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "write a file",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}
+
+── RESP ──
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "7",
+        "reasoning_text": "Think hard."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  }
+}
+

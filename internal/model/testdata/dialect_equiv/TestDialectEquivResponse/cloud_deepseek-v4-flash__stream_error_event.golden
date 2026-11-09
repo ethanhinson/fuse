@@ -1,0 +1,108 @@
+ERROR: model cloud/deepseek-v4-flash: 1 attempt(s) failed over 0s (payload 0KB, ~0k tokens est): gateway stream error: bad request
+REQUESTS: 1
+BODY 0:
+{"model":"cloud/deepseek-v4-flash","messages":[{"role":"system","content":"be useful"},{"role":"user","content":"fix the bug"},{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"role":"tool","content":"main.go","tool_call_id":"a","name":"bash"},{"role":"assistant","content":"","tool_calls":[{"id":"b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}}]},{"role":"tool","content":"","tool_call_id":"b","name":"bash"},{"role":"user","content":"keep going"}],"tools":[{"type":"function","function":{"name":"read_file","description":"read a file","parameters":{"properties":{"path":{"type":"string"}},"type":"object"}}},{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"properties":{"content":{"type":"string"},"path":{"type":"string"}},"type":"object"}}}],"max_tokens":1024,"stream":true,"stream_options":{"include_usage":true}}
+TRACE:
+
+── REQ ──
+{
+  "model": "cloud/deepseek-v4-flash",
+  "messages": [
+    {
+      "role": "system",
+      "content": "be useful"
+    },
+    {
+      "role": "user",
+      "content": "fix the bug"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "a",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"ls\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "main.go",
+      "tool_call_id": "a",
+      "name": "bash"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "b",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"true\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "",
+      "tool_call_id": "b",
+      "name": "bash"
+    },
+    {
+      "role": "user",
+      "content": "keep going"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "read a file",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "write a file",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}
+
+── ERROR ──
+model cloud/deepseek-v4-flash: 1 attempt(s) failed over 0s (payload 0KB, ~0k tokens est): gateway stream error: bad request
+

@@ -1,0 +1,174 @@
+RESPONSE:
+{
+  "Content": "Also.\n\n\u003cfunction=read_file\u003e\n\u003cparameter=path\u003e\ntask.md\n\u003c/parameter\u003e\n\u003c/function\u003e\n\u003c/tool_call\u003e",
+  "ToolCalls": [
+    {
+      "ID": "c9",
+      "Name": "write_file",
+      "Arguments": "{\"path\":\"x\"}"
+    }
+  ],
+  "InputTokens": 0,
+  "CachedTokens": 0,
+  "CacheWrite": 0,
+  "OutputTokens": 0,
+  "ReasoningTokens": 0,
+  "Reasoning": "",
+  "ReasoningField": "",
+  "FinishReason": "tool_calls"
+}
+REQUESTS: 1
+BODY 0:
+{"model":"cloud/claude-haiku-5.5","messages":[{"role":"system","content":[{"type":"text","text":"be useful","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"fix the bug"},{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"role":"tool","tool_call_id":"a","name":"bash","content":[{"type":"text","text":"main.go","cache_control":{"type":"ephemeral"}}]},{"role":"assistant","content":"","tool_calls":[{"id":"b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}}]},{"role":"tool","content":"","tool_call_id":"b","name":"bash"},{"role":"user","content":[{"type":"text","text":"keep going","cache_control":{"type":"ephemeral"}}]}],"tools":[{"type":"function","function":{"name":"read_file","description":"read a file","parameters":{"properties":{"path":{"type":"string"}},"type":"object"}}},{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"properties":{"content":{"type":"string"},"path":{"type":"string"}},"type":"object"}}}],"max_tokens":1024,"stream":true,"stream_options":{"include_usage":true}}
+TRACE:
+
+── REQ ──
+{
+  "model": "cloud/claude-haiku-5.5",
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "be useful",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "fix the bug"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "a",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"ls\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "a",
+      "name": "bash",
+      "content": [
+        {
+          "type": "text",
+          "text": "main.go",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "b",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"true\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "",
+      "tool_call_id": "b",
+      "name": "bash"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "keep going",
+          "cache_control": {
+            "type": "ephemeral"
+          }
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "read a file",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "write a file",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}
+
+── RESP ──
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "Also.\n\n\u003cfunction=read_file\u003e\n\u003cparameter=path\u003e\ntask.md\n\u003c/parameter\u003e\n\u003c/function\u003e\n\u003c/tool_call\u003e",
+        "tool_calls": [
+          {
+            "id": "c9",
+            "type": "function",
+            "function": {
+              "name": "write_file",
+              "arguments": "{\"path\":\"x\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  }
+}
+

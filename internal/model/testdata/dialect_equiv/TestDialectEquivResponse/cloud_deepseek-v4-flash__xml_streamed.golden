@@ -1,0 +1,167 @@
+RESPONSE:
+{
+  "Content": "Reading.",
+  "ToolCalls": [
+    {
+      "ID": "call_recovered_X",
+      "Name": "read_file",
+      "Arguments": "{\"path\":\"task.md\"}"
+    }
+  ],
+  "InputTokens": 0,
+  "CachedTokens": 0,
+  "CacheWrite": 0,
+  "OutputTokens": 0,
+  "ReasoningTokens": 0,
+  "Reasoning": "",
+  "ReasoningField": "",
+  "FinishReason": "stop"
+}
+REQUESTS: 1
+BODY 0:
+{"model":"cloud/deepseek-v4-flash","messages":[{"role":"system","content":"be useful"},{"role":"user","content":"fix the bug"},{"role":"assistant","content":"","tool_calls":[{"id":"a","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},{"role":"tool","content":"main.go","tool_call_id":"a","name":"bash"},{"role":"assistant","content":"","tool_calls":[{"id":"b","type":"function","function":{"name":"bash","arguments":"{\"command\":\"true\"}"}}]},{"role":"tool","content":"","tool_call_id":"b","name":"bash"},{"role":"user","content":"keep going"}],"tools":[{"type":"function","function":{"name":"read_file","description":"read a file","parameters":{"properties":{"path":{"type":"string"}},"type":"object"}}},{"type":"function","function":{"name":"write_file","description":"write a file","parameters":{"properties":{"content":{"type":"string"},"path":{"type":"string"}},"type":"object"}}}],"max_tokens":1024,"stream":true,"stream_options":{"include_usage":true}}
+TRACE:
+
+── REQ ──
+{
+  "model": "cloud/deepseek-v4-flash",
+  "messages": [
+    {
+      "role": "system",
+      "content": "be useful"
+    },
+    {
+      "role": "user",
+      "content": "fix the bug"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "a",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"ls\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "main.go",
+      "tool_call_id": "a",
+      "name": "bash"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "b",
+          "type": "function",
+          "function": {
+            "name": "bash",
+            "arguments": "{\"command\":\"true\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "",
+      "tool_call_id": "b",
+      "name": "bash"
+    },
+    {
+      "role": "user",
+      "content": "keep going"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read_file",
+        "description": "read a file",
+        "parameters": {
+          "properties": {
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "write_file",
+        "description": "write a file",
+        "parameters": {
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  }
+}
+
+── RESP ──
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "Reading.\n\n\u003cfunction=read_file\u003e\n\u003cparameter=path\u003e\ntask.md\n\u003c/parameter\u003e\n\u003c/function\u003e\n\u003c/tool_call\u003e"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  }
+}
+
+── RECOVERED ──
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "Reading.",
+        "tool_calls": [
+          {
+            "id": "call_recovered_X",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\":\"task.md\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0
+  }
+}
+
