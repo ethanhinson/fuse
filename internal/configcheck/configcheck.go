@@ -26,8 +26,9 @@ func Registry(cfg config.Config) *model.Registry {
 			ID: mc.ID, MaxTokens: mc.MaxTokens, MaxTokensCeiling: mc.MaxTokensCeiling, ContextWindow: mc.ContextWindow,
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix, ReasoningEffort: mc.ReasoningEffort,
 			DropReasoning: mc.ReplayReasoning != nil && !*mc.ReplayReasoning, Dialect: mc.Dialect,
-			Attachments: cloneBool(mc.Attachments),
-			Label:       mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
+			DialectOptions: mc.DialectOptions.Model(),
+			Attachments:    cloneBool(mc.Attachments),
+			Label:          mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
 			Hidden: mc.Advertise != nil && !*mc.Advertise,
 		})
 	}

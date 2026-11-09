@@ -2,7 +2,15 @@
 // .fuse.local.yml, falling back to a built-in default registry when absent.
 package config
 
-import "time"
+import (
+	"errors"
+	"slices"
+	"sort"
+	"time"
+
+	"github.com/ethanhinson/fuse/internal/model"
+	"gopkg.in/yaml.v3"
+)
 
 // Gateway describes the LiteLLM gateway endpoint.
 type Gateway struct {
@@ -43,10 +51,14 @@ type ModelConfig struct {
 	// it; without it every call starts from scratch. Unset means on; false turns
 	// it off. Nothing is sent for a model that returns no reasoning.
 	ReplayReasoning *bool `yaml:"replay_reasoning,omitempty"`
-	// Dialect names the model family whose request additions apply: anthropic
+	// Dialect names the model family whose wire behaviour applies: anthropic
 	// (prompt-cache breakpoints) or openai (none). Empty detects it from the
 	// model ID, so Claude models get anthropic without configuration.
+	// DialectOptions tune the chosen family.
 	Dialect string `yaml:"dialect,omitempty"`
+	// DialectOptions tune the model family's wire behaviour; unset keys keep the
+	// family default. See docs/model-dialects.md.
+	DialectOptions DialectOptions `yaml:"dialect_options,omitempty"`
 	// Attachments is whether the model accepts image attachments. Unset detects
 	// it: Claude models and entries tagged `vision` accept them. `cli/` models
 	// never do.
@@ -562,4 +574,68 @@ func Default() Config {
 			},
 		},
 	}
+}
+
+// DialectOptions are a model's `dialect_options:`. Unset keys keep the family
+// default; an empty ReasoningField counts as unset.
+type DialectOptions struct {
+	CacheMarkers     *bool  `yaml:"cache_markers,omitempty"`
+	ReasoningField   string `yaml:"reasoning_field,omitempty"`
+	RecoverToolCalls *bool  `yaml:"recover_tool_calls,omitempty"`
+
+	unknown []string // keys present in YAML that are not options; reported by Problems
+}
+
+// dialectOptionKeys are the accepted `dialect_options:` keys.
+var dialectOptionKeys = []string{"cache_markers", "reasoning_field", "recover_tool_calls"}
+
+// UnmarshalYAML reads a mapping of options, remembering keys it does not know so
+// Problems can report them.
+func (o *DialectOptions) UnmarshalYAML(n *yaml.Node) error {
+	*o = DialectOptions{}
+	if n.Kind == yaml.ScalarNode && n.Tag == "!!null" {
+		return nil
+	}
+	if n.Kind != yaml.MappingNode {
+		return errors.New("dialect_options must be a mapping of option: value")
+	}
+	type plain DialectOptions
+	var p plain
+	if err := n.Decode(&p); err != nil {
+		return err
+	}
+	*o = DialectOptions(p)
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if k := n.Content[i].Value; !slices.Contains(dialectOptionKeys, k) {
+			o.unknown = append(o.unknown, k)
+		}
+	}
+	sort.Strings(o.unknown)
+	return nil
+}
+
+// Model converts to the model layer's options, copying the pointers.
+func (o DialectOptions) Model() model.DialectOptions {
+	return model.DialectOptions{
+		CacheMarkers:     cloneBoolPtr(o.CacheMarkers),
+		ReasoningField:   o.ReasoningField,
+		RecoverToolCalls: cloneBoolPtr(o.RecoverToolCalls),
+	}
+}
+
+// DialectOptionsFrom is the inverse of Model.
+func DialectOptionsFrom(m model.DialectOptions) DialectOptions {
+	return DialectOptions{
+		CacheMarkers:     cloneBoolPtr(m.CacheMarkers),
+		ReasoningField:   m.ReasoningField,
+		RecoverToolCalls: cloneBoolPtr(m.RecoverToolCalls),
+	}
+}
+
+func cloneBoolPtr(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+	v := *b
+	return &v
 }

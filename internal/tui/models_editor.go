@@ -275,6 +275,7 @@ func (m ShellModel) saveModelForm() (bool, tea.Model, tea.Cmd) {
 			mc.ReasoningEffort = prev.ReasoningEffort
 			mc.DropReasoning = prev.DropReasoning
 			mc.Dialect = prev.Dialect
+			mc.DialectOptions = prev.DialectOptions
 			mc.Attachments = prev.Attachments
 			mc.SystemPrefix = prev.SystemPrefix
 			mc.Label = prev.Label
@@ -344,6 +345,7 @@ func toConfigModel(mc model.ModelConfig) config.ModelConfig {
 		SystemPrefix:     mc.SystemPrefix,
 		ReasoningEffort:  mc.ReasoningEffort,
 		Dialect:          mc.Dialect,
+		DialectOptions:   config.DialectOptionsFrom(mc.DialectOptions),
 		Attachments:      mc.Attachments,
 		Label:            mc.Label,
 		Description:      mc.Description,
