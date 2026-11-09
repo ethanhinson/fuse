@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/muesli/reflow/wrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
@@ -235,6 +238,19 @@ type ShellModel struct {
 	// Never auto-re-read (D2) — the flag is purely a display cue.
 	staleResources    []staleResource
 	staleResourceSeen map[string]bool
+
+	// Image attachments (drop, Ctrl+V, /attach). draftAtts are the images queued
+	// for the next message, keyed by the [Image #N] placeholder in the input;
+	// attachSeq numbers them for the whole conversation (reset by /clear).
+	draftAtts []draftAttachment
+	attachSeq int
+	clipBusy  bool // a clipboard read is in flight
+	clip      clipboardReader
+	artifacts artifact.Binding // session store the images are saved in; zero means none
+	// Test seams.
+	getwd func() (string, error)
+	home  func() (string, error)
+	goos  string
 }
 
 // staleResource is one MCP resource flagged stale by a pushed update.
@@ -259,6 +275,9 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
 	in.Focus()
+	// Ctrl+V is handled by the shell (clipboard image first, text otherwise), so
+	// the textinput's own text paste must never run.
+	in.KeyMap.Paste.SetEnabled(false)
 
 	vp := viewport.New(0, 0)
 
@@ -288,6 +307,10 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 		build:               build,
 		sessionMode:         sessionMode,
 		classifierAvailable: classifierAvailable,
+		clip:                newSystemClipboard(),
+		getwd:               os.Getwd,
+		home:                os.UserHomeDir,
+		goos:                runtime.GOOS,
 	}
 	m.appendLine(banner.String(version.Version))
 	m.appendLine(fmt.Sprintf("model: %s — /model NAME to switch, /verbose to toggle, /exit to quit", alias))
@@ -322,6 +345,19 @@ func (m ShellModel) WithHumanMessaging(bus *agent.HumanBus, reg *agent.HandleReg
 	m.humanBus = bus
 	m.handleReg = reg
 	m.router = router
+	return m
+}
+
+// WithArtifacts binds the session artifact store that attached images are saved
+// in, so an evicted image can be reopened by ref.
+func (m ShellModel) WithArtifacts(b artifact.Binding) ShellModel {
+	m.artifacts = b
+	return m
+}
+
+// WithClipboard replaces the clipboard reader (a test seam).
+func (m ShellModel) WithClipboard(r clipboardReader) ShellModel {
+	m.clip = r
 	return m
 }
 
@@ -384,6 +420,12 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsDiscoveredMsg:
 		m.applyModelsDiscovered(msg)
 		return m, nil
+
+	case clipboardResultMsg:
+		return m.handleClipboardResult(msg)
+
+	case attachCmdResultMsg:
+		return m.handleAttachCmdResult(msg)
 
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
@@ -724,7 +766,21 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Ctrl+V attaches a clipboard image, or pastes the clipboard text.
+	if msg.Type == tea.KeyCtrlV {
+		if m.clipBusy || m.clip == nil {
+			return m, nil
+		}
+		m.clipBusy = true
+		return m, readClipboardCmd(m.clip, m.attachStore())
+	}
+
 	switch msg.Type {
+	case tea.KeyBackspace:
+		if m.backspacePlaceholder() {
+			m.refreshCompleter()
+			return m, nil
+		}
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		return m, tea.Quit
 	case tea.KeyTab:
@@ -778,6 +834,14 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if line == "" {
 			return m, nil
 		}
+		// Images are never dropped silently: a line that carries them is sent as
+		// a plain prompt to a model that takes them, or kept as it is.
+		if len(m.draftRefs(line)) > 0 {
+			if why := m.attachSubmitBlock(line); why != "" {
+				m.notice(why)
+				return m, nil
+			}
+		}
 		// /interrupt must work mid-turn, so it comes before the busy-queue below.
 		if next, cmd, handled := m.routeInterruptInput(line); handled {
 			return next, cmd
@@ -815,6 +879,12 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// pasted message stringifies with brackets, which no binding matches.
 	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
 		msg.Paste = true
+	}
+	// A paste of image files becomes [Image #N] placeholders; anything else is
+	// text. Resolved here, synchronously, so keys typed next land after it.
+	if msg.Type == tea.KeyRunes && msg.Paste {
+		m.handlePastedRunes(string(msg.Runes))
+		return m, nil
 	}
 	// Let the text input handle the key first.
 	var cmd tea.Cmd
@@ -864,6 +934,12 @@ func (m ShellModel) handleCompleterKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		if !m.completer.argMode {
 			typed := strings.TrimSpace(m.input.Value())
 			if i := strings.IndexByte(typed, ' '); i > 0 && strings.HasPrefix(typed, "/") {
+				if len(m.draftRefs(typed)) > 0 {
+					if why := m.attachSubmitBlock(typed); why != "" {
+						m.notice(why)
+						return true, m, nil
+					}
+				}
 				m.completer.deactivate()
 				m.input.Reset()
 				if !m.running {
@@ -966,6 +1042,8 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.drainApprovals()
 		m.drainAsks()
 		m.history = nil
+		m.draftAtts = nil
+		m.attachSeq = 0
 		m.lines = nil
 		m.pendingCalls = nil
 		m.inlineByLabel = make(map[string]*inlineAgentState)
@@ -1050,7 +1128,12 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		}
 		m.switchModel(name)
 		m.appendLine(fmt.Sprintf("switched to %s", name))
+		if !m.acceptsAttachments() && historyHasAttachments(m.history) {
+			m.notice(fmt.Sprintf("note: %s does not accept images; earlier images in this conversation reach it as text notes", name))
+		}
 		return m, nil
+	case "/attach":
+		return m.attachCommand(line)
 	case "/mode":
 		if len(fields) == 1 {
 			// Bare /mode: name the current mode and list all options with a hint.
@@ -1148,7 +1231,16 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	// Echo the user's prompt into the transcript — without this the submitted
 	// text vanishes the moment the input clears.
 	m.appendLine(promptAliasStyle.Render("> ") + sanitizeDisplay(line))
-	m.history = append(m.history, model.Message{Role: "user", Content: line})
+	drafts := m.draftRefsN(line)
+	var atts []model.Attachment
+	for _, d := range drafts {
+		atts = append(atts, d.att)
+	}
+	m.draftAtts = nil
+	for _, l := range imageEchoLines(drafts) {
+		m.appendLine(l)
+	}
+	m.history = append(m.history, model.Message{Role: "user", Content: line, Attachments: atts})
 	m.running = true
 	m.turnFailed = false
 	m.runStart = time.Now()
@@ -1836,6 +1928,7 @@ func (m ShellModel) View() string {
 	// every status branch — an at-a-glance cue that the cached view is out of date
 	// (the client never auto-re-reads, D2). Empty when nothing is stale.
 	status += m.mcpStaleIndicator()
+	status += m.attachIndicator()
 
 	vpView := m.vp.View()
 	// Pending approval renders as an overlay on the viewport — it disappears

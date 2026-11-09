@@ -14,6 +14,7 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/verbose", Description: "Toggle verbose tool output", Kind: KindBuiltin, expand: func() string { return "/verbose" }},
 			{Command: "/models", Syntax: "[edit]", Description: "List available models; /models edit opens the mapping editor", Kind: KindBuiltin, expand: func() string { return "/models" }},
 			{Command: "/model", Syntax: "NAME", Description: "Switch model (Tab to complete an alias)", Kind: KindBuiltin, expand: func() string { return "/model " }},
+			{Command: "/attach", Syntax: "PATH...", Description: "Attach images to your next message (or drop a file on the terminal, or Ctrl+V a screenshot)", Kind: KindBuiltin, expand: func() string { return "/attach " }},
 			{Command: "/mode", Syntax: "NAME", Description: "Show or set the permission mode (smart/auto/prompt-all/off)", Kind: KindBuiltin, expand: func() string { return "/mode " }},
 			{Command: "/config", Description: "Open the tabbed settings screen (models, permissions, MCP)", Kind: KindBuiltin, expand: func() string { return "/config" }},
 			{Command: "/agents", Description: "Open the live agent tree (also: Tab)", Kind: KindBuiltin, expand: func() string { return "/agents" }},

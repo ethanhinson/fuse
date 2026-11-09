@@ -287,6 +287,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Segment surface (change 0030): the /agents overlay reads this session's
 	// archived segments for the compaction indicator and "s" show-original.
 	m = m.WithSegments(segment.NewArtifactSource(toolReg.Artifacts()))
+	m = m.WithArtifacts(toolReg.Artifacts())
 	m = m.WithHumanMessaging(humanBus, handleReg, humanRouter)
 	// Hand the same shared bucket to the observability surface so the agents
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate

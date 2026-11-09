@@ -5,10 +5,11 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
-// maxLiveAttachments is how many images stay in the history sent to the model,
+// MaxLiveAttachments is how many images stay in the history sent to the model,
 // newest first. It sits far under Anthropic's 20-image threshold, where the
-// per-side limit drops to 2000 px.
-const maxLiveAttachments = 4
+// per-side limit drops to 2000 px. The shell also uses it as its per-message
+// image cap.
+const MaxLiveAttachments = 4
 
 // evictOldAttachments keeps the newest keep attachments across msgs and removes
 // the rest, oldest first, appending to each message's text a stub naming how to
