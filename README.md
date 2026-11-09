@@ -451,7 +451,8 @@ yet are skipped, and every tool call still gets a result, so the conversation st
 
 In `fuse shell` you can give a vision-capable model an image (PNG, JPEG, GIF or WebP, up to 3.5 MB).
 Drag a file onto the terminal, press **Ctrl+V** to attach an image from the clipboard (a screenshot,
-for example; macOS and Linux with `wl-paste` or `xclip`), or run `/attach PATH...`. Each image
+for example, or a file copied in Finder or a file manager; macOS, Windows and Linux on Wayland or
+X11, with no extra tools), or run `/attach PATH...`. Each image
 becomes an `[Image #N]` placeholder in the input, and the images whose placeholders are still there
 when you press Enter go with that message (at most 4). Backspace removes a whole placeholder. A model
 that does not accept images never gets the bytes: it is told so when you attach, and Enter is refused

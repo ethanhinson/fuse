@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/muesli/reflow/wordwrap"
 
@@ -415,10 +414,7 @@ func (m ShellModel) handleClipboardResult(msg clipboardResultMsg) (tea.Model, te
 	m.clipBusy = false
 	if msg.err != nil {
 		switch {
-		case errors.Is(msg.err, errClipboardUnsupported):
-			m.notice(fmt.Sprintf("pasting images is not supported on %s yet; drag the file in or use /attach PATH", m.goos))
-			return m, textinput.Paste
-		case errors.Is(msg.err, errClipboardNoTool), errors.Is(msg.err, errClipboardTimeout):
+		case errors.Is(msg.err, errClipboardUnavailable), errors.Is(msg.err, errClipboardTimeout):
 			m.notice(msg.err.Error())
 		default:
 			m.notice("reading the clipboard failed: " + msg.err.Error())

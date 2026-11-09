@@ -6,13 +6,12 @@ import (
 	"errors"
 	"image"
 	"image/png"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.design/x/clipboard"
 )
 
 func pngFixture(t *testing.T) []byte {
@@ -24,254 +23,114 @@ func pngFixture(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// fakeRun scripts external commands: each call is recorded as "name args...",
-// and the first rule whose key is a prefix of the call decides the outcome.
-type fakeRun struct {
-	calls []string
-	rules []fakeRule
+// fakeBackend scripts the clipboard library: what each format holds or the
+// error reading it returns, and which reads were made.
+type fakeBackend struct {
+	initErr  error
+	inits    int
+	files    []string
+	filesErr error
+	data     map[clipboard.Format][]byte
+	errs     map[clipboard.Format]error
+	reads    []clipboard.Format
 }
 
-type fakeRule struct {
-	prefix string
-	out    string
-	err    error
-	write  []byte // written to the last argv, as the osascript PNGf script does
-}
+func (f *fakeBackend) init() error { f.inits++; return f.initErr }
 
-func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, error) {
-	call := strings.Join(append([]string{name}, args...), " ")
-	f.calls = append(f.calls, call)
-	for _, r := range f.rules {
-		if strings.HasPrefix(call, r.prefix) {
-			if r.write != nil {
-				if err := os.WriteFile(args[len(args)-1], r.write, 0o644); err != nil {
-					return nil, err
-				}
-			}
-			return []byte(r.out), r.err
-		}
+func (f *fakeBackend) readFiles(context.Context) ([]string, error) {
+	if f.filesErr != nil {
+		return nil, f.filesErr
 	}
-	return nil, &cmdError{Name: name, Stderr: "unscripted"}
-}
-
-func (f *fakeRun) called(prefix string) bool {
-	for _, c := range f.calls {
-		if strings.HasPrefix(c, prefix) {
-			return true
-		}
+	if len(f.files) == 0 {
+		return nil, clipboard.ErrNoData
 	}
-	return false
+	return f.files, nil
 }
 
-func newFakeClipboard(goos string, env map[string]string, tools []string, f *fakeRun) (*systemClipboard, string) {
-	dir, _ := os.MkdirTemp("", "clip-test-")
-	return &systemClipboard{
-		goos:   goos,
-		getenv: func(k string) string { return env[k] },
-		lookPath: func(n string) (string, error) {
-			for _, t := range tools {
-				if t == n {
-					return "/bin/" + n, nil
-				}
-			}
-			return "", errors.New("not found")
-		},
-		run:     f.run,
-		tempDir: dir,
-	}, dir
+func (f *fakeBackend) read(_ context.Context, fm clipboard.Format) ([]byte, error) {
+	f.reads = append(f.reads, fm)
+	if err := f.errs[fm]; err != nil {
+		return nil, err
+	}
+	if d := f.data[fm]; len(d) > 0 {
+		return d, nil
+	}
+	return nil, clipboard.ErrNoData
 }
 
-var errNotType = &cmdError{Name: "osascript", Stderr: "execution error: Can't make some data into the expected type. (-1700)"}
-
-func noClipTemp(t *testing.T, dir string) {
+func readClip(t *testing.T, f *fakeBackend) (clipboardContent, error) {
 	t.Helper()
-	left, _ := filepath.Glob(filepath.Join(dir, "fuse-clip-*"))
-	if len(left) != 0 {
-		t.Errorf("temp dirs left behind: %v", left)
+	return (&systemClipboard{backend: f}).Read(t.Context())
+}
+
+// A file-manager copy wins even when the clipboard also holds the file's icon.
+func TestClipboardFilesComeFirst(t *testing.T) {
+	f := &fakeBackend{files: []string{"/x/a.png"}, data: map[clipboard.Format][]byte{clipboard.FmtImage: pngFixture(t)}}
+	got, err := readClip(t, f)
+	if err != nil || !reflect.DeepEqual(got.Paths, []string{"/x/a.png"}) || got.Data != nil {
+		t.Fatalf("got %+v err %v", got, err)
+	}
+	if len(f.reads) != 0 {
+		t.Errorf("image or text read after files: %v", f.reads)
 	}
 }
 
-// clipboard info listings as macOS reports them.
-const (
-	infoScreenshot = "«class PNGf», 415, «class AVIF», 422, TIFF picture, 60950, «class BMP », 57654"
-	infoFinderCopy = "«class furl», 61, «class icns», 3184, TIFF picture, 9406, «class utf8», 12"
-	infoAlias      = "alias, 476"
-	infoText       = "«class utf8», 24, «class ut16», 50, string, 24, Unicode text, 48"
-)
-
-func TestClipboardDarwinScreenshot(t *testing.T) {
+func TestClipboardImage(t *testing.T) {
 	data := pngFixture(t)
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "osascript -e clipboard info", out: infoScreenshot},
-		{prefix: "osascript -e on run argv", write: data},
-	}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || !bytes.Equal(got.Data, data) {
-		t.Fatalf("got %+v err %v", got, err)
-	}
-	if f.called("osascript -e POSIX path") {
-		t.Error("image data must not be coerced to a file URL")
-	}
-	noClipTemp(t, dir)
-}
-
-func TestClipboardDarwinFinderFile(t *testing.T) {
-	for name, info := range map[string]string{"furl": infoFinderCopy, "alias": infoAlias} {
-		t.Run(name, func(t *testing.T) {
-			f := &fakeRun{rules: []fakeRule{
-				{prefix: "osascript -e clipboard info", out: info},
-				{prefix: "osascript -e POSIX path", out: "/x/a.png\n"},
-			}}
-			c, dir := newFakeClipboard("darwin", nil, nil, f)
-			defer os.RemoveAll(dir)
-			got, err := c.Read(t.Context())
-			if err != nil || !reflect.DeepEqual(got.Paths, []string{"/x/a.png"}) {
-				t.Fatalf("got %+v err %v", got, err)
-			}
-			if f.called("osascript -e on run") {
-				t.Error("PNGf must not be tried after a Finder file")
-			}
-		})
-	}
-}
-
-func TestClipboardDarwinTextOnly(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "osascript -e clipboard info", out: infoText},
-		{prefix: "pbpaste", out: "hi"},
-	}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || got.Text != "hi" {
-		t.Fatalf("got %+v err %v", got, err)
-	}
-	noClipTemp(t, dir)
-}
-
-// Live, Ctrl+V with "hello from the clipboard" on the clipboard tried to open
-// "/hello from the clipboard": AppleScript coerces text to a file URL. Text must
-// stay text, so the file coercion is never attempted without a file type.
-func TestClipboardDarwinTextIsNotReadAsAFile(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "osascript -e clipboard info", out: infoText},
-		{prefix: "osascript -e POSIX path", out: "/hello from the clipboard\n"},
-		{prefix: "pbpaste", out: "hello from the clipboard"},
-	}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || len(got.Paths) != 0 || got.Text != "hello from the clipboard" {
-		t.Fatalf("got %+v err %v", got, err)
-	}
-	if f.called("osascript -e POSIX path") || f.called("osascript -e on run") {
-		t.Errorf("text clipboard was coerced: %v", f.calls)
-	}
-}
-
-func TestClipboardDarwinOtherErrorSurfaces(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{{prefix: "osascript", err: &cmdError{Name: "osascript", Stderr: "not authorized (-1743)"}}}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	if _, err := c.Read(t.Context()); err == nil || !strings.Contains(err.Error(), "-1743") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestClipboardWaylandImage(t *testing.T) {
-	data := pngFixture(t)
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "wl-paste --list-types", out: "text/plain\nimage/png\n"},
-		{prefix: "wl-paste --no-newline --type image/png", out: string(data)},
-	}}
-	c, dir := newFakeClipboard("linux", map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, []string{"wl-paste"}, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || !bytes.Equal(got.Data, data) || !f.called("wl-paste --no-newline --type image/png") {
-		t.Fatalf("got %+v err %v calls %v", got, err, f.calls)
-	}
-}
-
-func TestClipboardWaylandURIList(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "wl-paste --list-types", out: "text/uri-list\ntext/plain\n"},
-		{prefix: "wl-paste --no-newline --type text/uri-list", out: "file:///x/a%20b.png\r\n"},
-	}}
-	c, dir := newFakeClipboard("linux", map[string]string{"WAYLAND_DISPLAY": "w"}, []string{"wl-paste"}, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || !reflect.DeepEqual(got.Paths, []string{"/x/a b.png"}) {
+	f := &fakeBackend{data: map[clipboard.Format][]byte{clipboard.FmtImage: data, clipboard.FmtText: []byte("caption")}}
+	got, err := readClip(t, f)
+	if err != nil || !bytes.Equal(got.Data, data) || got.Text != "" {
 		t.Fatalf("got %+v err %v", got, err)
 	}
 }
 
-func TestClipboardX11Image(t *testing.T) {
-	data := pngFixture(t)
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "xclip -selection clipboard -t TARGETS -o", out: "TARGETS\nimage/png\n"},
-		{prefix: "xclip -selection clipboard -t image/png -o", out: string(data)},
-	}}
-	c, dir := newFakeClipboard("linux", map[string]string{"DISPLAY": ":0"}, []string{"xclip"}, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || !bytes.Equal(got.Data, data) {
+// Plain text stays text. Live, the old osascript reader turned "hello" into the
+// file /hello, because AppleScript coerces text to a file URL.
+func TestClipboardTextStaysText(t *testing.T) {
+	f := &fakeBackend{data: map[clipboard.Format][]byte{clipboard.FmtText: []byte("hello from the clipboard")}}
+	got, err := readClip(t, f)
+	if err != nil || len(got.Paths) != 0 || got.Data != nil || got.Text != "hello from the clipboard" {
 		t.Fatalf("got %+v err %v", got, err)
 	}
 }
 
-func TestClipboardLinuxTextFallback(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{
-		{prefix: "xclip -selection clipboard -t TARGETS -o", out: "TARGETS\nUTF8_STRING\n"},
-		{prefix: "xclip -selection clipboard -o", out: "plain"},
-	}}
-	c, dir := newFakeClipboard("linux", map[string]string{"DISPLAY": ":0"}, []string{"xclip"}, f)
-	defer os.RemoveAll(dir)
-	got, err := c.Read(t.Context())
-	if err != nil || got.Text != "plain" {
+func TestClipboardEmpty(t *testing.T) {
+	got, err := readClip(t, &fakeBackend{})
+	if err != nil || got.Paths != nil || got.Data != nil || got.Text != "" {
 		t.Fatalf("got %+v err %v", got, err)
 	}
 }
 
-func TestClipboardLinuxNoTool(t *testing.T) {
-	c, dir := newFakeClipboard("linux", map[string]string{"WAYLAND_DISPLAY": "w", "DISPLAY": ":0"}, nil, &fakeRun{})
-	defer os.RemoveAll(dir)
-	if _, err := c.Read(t.Context()); !errors.Is(err, errClipboardNoTool) {
-		t.Fatalf("err = %v", err)
+// No display server (or no clipboard at all): a clear error, and the library
+// is initialised once, not on every Ctrl+V.
+func TestClipboardUnavailable(t *testing.T) {
+	f := &fakeBackend{initErr: errors.New("no display")}
+	c := &systemClipboard{backend: f}
+	for range 2 {
+		if _, err := c.Read(t.Context()); !errors.Is(err, errClipboardUnavailable) || !strings.Contains(err.Error(), "no display") {
+			t.Fatalf("err = %v", err)
+		}
 	}
-}
-
-func TestClipboardWindowsUnsupported(t *testing.T) {
-	c, dir := newFakeClipboard("windows", nil, nil, &fakeRun{})
-	defer os.RemoveAll(dir)
-	if _, err := c.Read(t.Context()); !errors.Is(err, errClipboardUnsupported) {
-		t.Fatalf("err = %v", err)
+	if f.inits != 1 {
+		t.Errorf("init called %d times", f.inits)
+	}
+	f2 := &fakeBackend{filesErr: clipboard.ErrUnavailable}
+	if _, err := readClip(t, f2); !errors.Is(err, errClipboardUnavailable) {
+		t.Errorf("ErrUnavailable from a read: err = %v", err)
 	}
 }
 
 func TestClipboardTimeout(t *testing.T) {
-	f := &fakeRun{rules: []fakeRule{{prefix: "osascript", err: context.DeadlineExceeded}}}
-	c, dir := newFakeClipboard("darwin", nil, nil, f)
-	defer os.RemoveAll(dir)
-	_, err := c.Read(t.Context())
-	if err == nil || err.Error() != "reading the clipboard timed out after 5s" {
+	f := &fakeBackend{errs: map[clipboard.Format]error{clipboard.FmtImage: context.DeadlineExceeded}}
+	if _, err := readClip(t, f); !errors.Is(err, errClipboardTimeout) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRunCommandCapsStdout(t *testing.T) {
-	out, err := runCommand(t.Context(), "sh", "-c", "head -c 4000000 /dev/zero")
-	if err != nil {
-		t.Skipf("sh unavailable: %v", err)
-	}
-	if len(out) != 7<<19+1 {
-		t.Errorf("len = %d", len(out))
-	}
-	_, err = runCommand(t.Context(), "sh", "-c", "echo boom >&2; exit 3")
-	var ce *cmdError
-	if !errors.As(err, &ce) || !strings.Contains(ce.Stderr, "boom") {
-		t.Errorf("err = %v", err)
+func TestClipboardOtherErrorSurfaces(t *testing.T) {
+	f := &fakeBackend{errs: map[clipboard.Format]error{clipboard.FmtText: errors.New("boom")}}
+	if _, err := readClip(t, f); err == nil || err.Error() != "boom" {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -384,7 +243,7 @@ func TestCtrlVErrors(t *testing.T) {
 		err  error
 		want string
 	}{
-		{errClipboardNoTool, "pasting images needs wl-paste (Wayland) or xclip (X11)"},
+		{errClipboardUnavailable, "the clipboard is not available here; drag the file in or use /attach PATH"},
 		{errClipboardTimeout, "reading the clipboard timed out after 5s"},
 		{errors.New("boom"), "reading the clipboard failed: boom"},
 	}
@@ -395,21 +254,6 @@ func TestCtrlVErrors(t *testing.T) {
 		if !strings.Contains(flatText(m), c.want) {
 			t.Errorf("%v: transcript = %q", c.err, plainLines(m))
 		}
-	}
-}
-
-func TestCtrlVUnsupportedOSFallsBackToTextPaste(t *testing.T) {
-	m, _, _ := newAttachModel(t)
-	m.goos = "windows"
-	m = m.WithClipboard(&fakeReader{err: errClipboardUnsupported})
-	m, cmd := pressKey(m, tea.KeyCtrlV)
-	next, c2 := m.Update(runUntil[clipboardResultMsg](t, cmd))
-	m = next.(ShellModel)
-	if !strings.Contains(flatText(m), "pasting images is not supported on windows yet; drag the file in or use /attach PATH") {
-		t.Errorf("transcript = %q", plainLines(m))
-	}
-	if c2 == nil {
-		t.Error("text paste fallback cmd expected")
 	}
 }
 
