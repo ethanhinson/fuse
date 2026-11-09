@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/wordwrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/artifact"
@@ -52,7 +53,19 @@ type attachCmdResultMsg struct {
 
 func placeholder(n int) string { return fmt.Sprintf("[Image #%d]", n) }
 
-func (m *ShellModel) notice(s string) { m.appendLine(headerStyle.Render(s)) }
+// notice appends a styled notice. The plain text is word-wrapped to the
+// viewport first and each row styled on its own, as appendErrorLine does: the
+// viewport's own wrap of a long styled line split it mid-phrase.
+func (m *ShellModel) notice(s string) {
+	// One column of slack: reflow's wordwrap can end a row one cell over the
+	// limit, which is what pushed a lone ":" onto its own row live.
+	if w := m.vp.Width - 1; w >= 20 {
+		s = wordwrap.String(s, w)
+	}
+	for _, l := range strings.Split(s, "\n") {
+		m.appendLine(headerStyle.Render(l))
+	}
+}
 
 // draftRefsN returns the queued images whose placeholders appear in line, in
 // order of first appearance. Numbers with nothing queued are plain text.

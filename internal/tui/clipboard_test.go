@@ -309,7 +309,7 @@ func TestCtrlVEmptyClipboard(t *testing.T) {
 	m, _, _ := newAttachModel(t)
 	m = m.WithClipboard(&fakeReader{})
 	m = ctrlV(t, m)
-	if !strings.Contains(plainLines(m), "no image on the clipboard") || m.input.Value() != "" {
+	if !strings.Contains(flatText(m), "no image on the clipboard") || m.input.Value() != "" {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -322,7 +322,7 @@ func TestCtrlVTextOnlyModel(t *testing.T) {
 	if m.input.Value() != "" || len(m.draftAtts) != 0 {
 		t.Fatalf("input = %q", m.input.Value())
 	}
-	if !strings.Contains(plainLines(m), "txt does not accept images, so the clipboard image was not attached.") {
+	if !strings.Contains(flatText(m), "txt does not accept images, so the clipboard image was not attached.") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -354,7 +354,7 @@ func TestCtrlVErrors(t *testing.T) {
 		m, _, _ := newAttachModel(t)
 		m = m.WithClipboard(&fakeReader{err: c.err})
 		m = ctrlV(t, m)
-		if !strings.Contains(plainLines(m), c.want) {
+		if !strings.Contains(flatText(m), c.want) {
 			t.Errorf("%v: transcript = %q", c.err, plainLines(m))
 		}
 	}
@@ -367,7 +367,7 @@ func TestCtrlVUnsupportedOSFallsBackToTextPaste(t *testing.T) {
 	m, cmd := pressKey(m, tea.KeyCtrlV)
 	next, c2 := m.Update(runUntil[clipboardResultMsg](t, cmd))
 	m = next.(ShellModel)
-	if !strings.Contains(plainLines(m), "pasting images is not supported on windows yet; drag the file in or use /attach PATH") {
+	if !strings.Contains(flatText(m), "pasting images is not supported on windows yet; drag the file in or use /attach PATH") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 	if c2 == nil {

@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -172,7 +174,7 @@ func TestDropMissingFileIsText(t *testing.T) {
 	if m.input.Value() != raw || len(m.draftAtts) != 0 {
 		t.Fatalf("input = %q", m.input.Value())
 	}
-	if strings.Contains(plainLines(m), "not attached") {
+	if strings.Contains(flatText(m), "not attached") {
 		t.Error("a missing file is plain text and says nothing")
 	}
 }
@@ -257,7 +259,7 @@ func TestDropCapAtFour(t *testing.T) {
 	if got, want := m.input.Value(), before+extra; got != want {
 		t.Errorf("input = %q want %q", got, want)
 	}
-	if !strings.Contains(plainLines(m), "not attached: at most 4 images per message; remove one first") {
+	if !strings.Contains(flatText(m), "not attached: at most 4 images per message; remove one first") {
 		t.Error("cap notice missing")
 	}
 }
@@ -376,7 +378,7 @@ func TestSubmitBlockedWhileRunning(t *testing.T) {
 	if m.input.Value() != "[Image #1] " || len(m.history) != 0 {
 		t.Fatalf("input = %q history = %d", m.input.Value(), len(m.history))
 	}
-	if !strings.Contains(plainLines(m), "images go with a new prompt: wait for this turn to finish") {
+	if !strings.Contains(flatText(m), "images go with a new prompt: wait for this turn to finish") {
 		t.Error("notice missing")
 	}
 }
@@ -389,7 +391,7 @@ func TestSubmitBlockedOnTextOnlyModel(t *testing.T) {
 	if m.input.Value() != "[Image #1] " || len(m.history) != 0 {
 		t.Fatalf("input = %q", m.input.Value())
 	}
-	if !strings.Contains(plainLines(m), "txt does not accept images. Switch with /model NAME, or delete the [Image #N] placeholders to send the text alone.") {
+	if !strings.Contains(flatText(m), "txt does not accept images. Switch with /model NAME, or delete the [Image #N] placeholders to send the text alone.") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -405,7 +407,7 @@ func TestSubmitBlockedForRoutedMessage(t *testing.T) {
 	if m.input.Value() != "@coder see [Image #1]" {
 		t.Fatalf("input = %q", m.input.Value())
 	}
-	if !strings.Contains(plainLines(m), "images can only go with a plain prompt, not a routed message") {
+	if !strings.Contains(flatText(m), "images can only go with a plain prompt, not a routed message") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 	if len(bus.Pending("coder-1")) != 0 {
@@ -432,7 +434,7 @@ func TestModelSwitchWarnsAboutHistoryImages(t *testing.T) {
 	m, _, _ := newAttachModel(t)
 	m.history = []model.Message{{Role: "user", Content: "x", Attachments: []model.Attachment{{Name: "a.png"}}}}
 	m = typeAndEnter(m, "/model txt")
-	if !strings.Contains(plainLines(m), "note: txt does not accept images; earlier images in this conversation reach it as text notes") {
+	if !strings.Contains(flatText(m), "note: txt does not accept images; earlier images in this conversation reach it as text notes") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 	m = typeAndEnter(m, "/model vis")
@@ -474,7 +476,7 @@ func TestAttachCommandErrors(t *testing.T) {
 	m, cmd := pressKey(m, tea.KeyEnter)
 	next, _ := m.Update(runUntil[attachCmdResultMsg](t, cmd))
 	m = next.(ShellModel)
-	out := plainLines(m)
+	out := flatText(m)
 	if !strings.Contains(out, "not attached: open ") || !strings.Contains(out, "is not a PNG, JPEG, GIF or WebP image") {
 		t.Errorf("transcript = %q", out)
 	}
@@ -492,7 +494,7 @@ func TestAttachCommandTextOnlyModel(t *testing.T) {
 	if cmd != nil {
 		t.Error("no cmd expected")
 	}
-	if !strings.Contains(plainLines(m), "txt does not accept images, so nothing was attached.") {
+	if !strings.Contains(flatText(m), "txt does not accept images, so nothing was attached.") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -501,7 +503,7 @@ func TestAttachCommandUsage(t *testing.T) {
 	m, _, _ := newAttachModel(t)
 	m.input.SetValue("/attach")
 	m, _ = pressKey(m, tea.KeyEnter)
-	if !strings.Contains(plainLines(m), "usage: /attach PATH... - attach images (PNG, JPEG, GIF or WebP) to your next message") {
+	if !strings.Contains(flatText(m), "usage: /attach PATH... - attach images (PNG, JPEG, GIF or WebP) to your next message") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -510,7 +512,7 @@ func TestAttachCommandParseFailure(t *testing.T) {
 	m, _, _ := newAttachModel(t)
 	m.input.SetValue("/attach 'unterminated")
 	m, _ = pressKey(m, tea.KeyEnter)
-	if !strings.Contains(plainLines(m), "could not parse the path; quote paths that contain spaces") {
+	if !strings.Contains(flatText(m), "could not parse the path; quote paths that contain spaces") {
 		t.Errorf("transcript = %q", plainLines(m))
 	}
 }
@@ -559,4 +561,29 @@ func TestAttachBuiltinEntry(t *testing.T) {
 		}
 	}
 	t.Error("/attach builtin missing")
+}
+
+// A long notice is word-wrapped to the viewport before styling, so no row
+// splits mid-phrase (live, "attachments: true" broke into three rows).
+func TestNoticeWrapsToViewportWidth(t *testing.T) {
+	var m ShellModel
+	m.vp.Width = 40
+	m.notice("haiku-text does not accept images, so the path was pasted as text. Switch with /model NAME, or set attachments: true on its config entry if it does.")
+	for _, l := range m.lines {
+		if w := lipgloss.Width(l.text); w > 40 {
+			t.Errorf("row %q is %d wide", l.text, w)
+		}
+		if strings.TrimSpace(regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(l.text, "")) == ":" {
+			t.Errorf("a row holds only a colon")
+		}
+	}
+	if len(m.lines) < 3 {
+		t.Errorf("expected several rows, got %d", len(m.lines))
+	}
+}
+
+// flatText is the plain transcript with every whitespace run collapsed to one
+// space, so a notice sentence matches however it was wrapped.
+func flatText(m ShellModel) string {
+	return strings.Join(strings.Fields(plainLines(m)), " ")
 }
