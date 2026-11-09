@@ -79,9 +79,12 @@ type CompletionReq struct {
 	// call without it. Off sends no reasoning. The CLI sets it unless the model's
 	// config turns it off.
 	ReplayReasoning bool
-	// Dialect names the model family's request additions (see dialect.go). Empty
-	// detects it from Model.
+	// Dialect names the model family whose wire behaviour applies (see
+	// dialect.go). Empty detects it from Model.
 	Dialect string
+	// DialectOptions tune the dialect's capabilities (config dialect_options:).
+	// Zero keeps the family defaults.
+	DialectOptions DialectOptions
 	// Attachments reports whether the model accepts images. When false the
 	// adapter sends no image parts and each attachment goes as a text note, so a
 	// text-only model never receives image bytes.

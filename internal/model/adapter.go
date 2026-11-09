@@ -187,7 +187,7 @@ type wireMessage struct {
 
 	// cacheBreakpoint sends Content as one text part marked cache_control, the
 	// OpenAI content-part form of an Anthropic prompt-cache breakpoint. Set by
-	// a dialect (see anthropicDialect); never read from a reply.
+	// a dialect with cacheMarkers on (see markPromptCache); never read from a reply.
 	cacheBreakpoint bool
 	// images are sent as image_url parts after the text, in content-part form.
 	// Set from Message.Attachments; never read from a reply.
@@ -256,6 +256,12 @@ func pickReasoning(content, reasoning, text string) (string, string) {
 		return text, fieldReasoningText
 	}
 	return "", ""
+}
+
+// ReasoningFields lists the wire fields a reply's reasoning can arrive in, in
+// the order they are read.
+func ReasoningFields() []string {
+	return []string{fieldReasoningContent, fieldReasoning, fieldReasoningText}
 }
 
 // setReasoning puts text in the wire field named by field (reasoning_content
@@ -478,6 +484,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	// timeout measures time-to-first-byte while RequestTimeout still bounds the
 	// full attempt. We consume the SSE stream and return the assembled result,
 	// so Complete's signature and the agent loop are unchanged.
+	d := resolveDialect(req.Dialect, req.Model, req.DialectOptions)
 	payload := wireReq{
 		Model: req.Model, MaxTokens: req.MaxTokens, ToolChoice: req.ToolChoice, ReasoningEffort: req.ReasoningEffort,
 		Stream: true, StreamOptions: &wireStreamOptions{IncludeUsage: true},
@@ -498,7 +505,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 			}
 		}
 		if req.ReplayReasoning && m.Role == "assistant" && m.Reasoning != "" {
-			wm.setReasoning(m.Reasoning, m.ReasoningField)
+			wm.setReasoning(m.Reasoning, d.replayField(m.ReasoningField))
 		}
 		for _, tc := range m.ToolCalls {
 			w := wireToolCall{ID: tc.ID, Type: "function"}
@@ -523,9 +530,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		wt.Function.Parameters = t.Parameters
 		payload.Tools = append(payload.Tools, wt)
 	}
-	// The model family's additions (cache marks for Anthropic, nothing for
-	// OpenAI-style providers); see dialect.go.
-	resolveDialect(req.Dialect, req.Model).prepare(&payload)
+	// The model family's additions (cache marks when its capabilities ask for
+	// them, then its prepare hook); see dialect.go.
+	d.prepareRequest(&payload)
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -567,9 +574,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	attempts := 0
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
-		resp, err, retryable := a.completeOnce(ctx, body, req.Tools)
-		if err == nil && replyEmpty(resp) {
-			resp = a.completeUnstreamed(ctx, payload, req.Tools, resp)
+		resp, err, retryable := a.completeOnce(ctx, body, req.Tools, d)
+		if err == nil && d.caps.retryEmptyUnstreamed && replyEmpty(resp) {
+			resp = a.completeUnstreamed(ctx, payload, req.Tools, d, resp)
 		}
 		if err == nil {
 			// Reconcile the pre-dispatch estimate with the gateway's reported usage so
@@ -682,7 +689,7 @@ func replyEmpty(r CompletionResp) bool {
 // and [DONE] while the same request answers fully when buffered, so the empty stream
 // says nothing about the model. It returns the original reply if this fails too, and
 // the agent loop decides what to do about an empty reply.
-func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools []ToolSchema, empty CompletionResp) CompletionResp {
+func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools []ToolSchema, d resolvedDialect, empty CompletionResp) CompletionResp {
 	payload.Stream = false
 	payload.StreamOptions = nil
 	body, err := json.Marshal(payload)
@@ -691,7 +698,7 @@ func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools
 	}
 	a.tracef("RETRY", []byte("empty streamed reply; asking again without streaming"))
 	a.tracef("REQ", prettyJSON(redactDataURLs(body)))
-	resp, err, _ := a.completeOnce(ctx, body, tools)
+	resp, err, _ := a.completeOnce(ctx, body, tools, d)
 	if err != nil {
 		a.tracef("ERROR", []byte(err.Error()))
 		return empty
@@ -701,7 +708,7 @@ func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools
 
 // completeOnce performs a single bounded request attempt. retryable reports
 // whether the failure class is worth another attempt.
-func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
 	if a.RequestTimeout > 0 {
@@ -752,9 +759,9 @@ func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSch
 	}
 	var out CompletionResp
 	if strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
-		out, err, retryable = a.readStream(respBody, tools)
+		out, err, retryable = a.readStream(respBody, tools, d)
 	} else {
-		out, err, retryable = a.readBuffered(respBody, tools)
+		out, err, retryable = a.readBuffered(respBody, tools, d)
 	}
 	if err != nil && stalled.Load() {
 		return CompletionResp{}, fmt.Errorf("gateway response silent for %s: %w", a.StreamIdleTimeout, err), true
@@ -778,7 +785,7 @@ func (i idleResetReader) Read(p []byte) (int, error) {
 }
 
 // readBuffered parses a whole non-streamed chat-completion JSON body.
-func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		return CompletionResp{}, fmt.Errorf("read gateway response: %w", err), true
@@ -807,7 +814,19 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ Completion
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
-	return a.recoverToolCalls(out, tools), nil, false
+	return a.finishReply(out, tools, d), nil, false
+}
+
+// finishReply applies the dialect's reply steps: XML tool-call recovery when
+// on, then the family's finish hook.
+func (a *Adapter) finishReply(out CompletionResp, tools []ToolSchema, d resolvedDialect) CompletionResp {
+	if d.caps.recoverToolCalls {
+		out = a.recoverToolCalls(out, tools)
+	}
+	if d.finish != nil {
+		d.finish(&out, tools, d.caps)
+	}
+	return out
 }
 
 // recoverToolCalls applies the Qwen-style XML fallback (see recover.go) to a
@@ -883,7 +902,7 @@ func repeatsAtTail(s string) bool {
 // retryableStreamError). A reply degenerating into repetition is cut off early
 // and retried: returning here unwinds completeOnce, whose deferred cancel
 // aborts the request so the provider stops generating.
-func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) readStream(body io.Reader, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	var content strings.Builder
 	// Each reasoning field is collected separately: a gateway may send the same
 	// text in several, and only one is kept.
@@ -984,7 +1003,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	}
 	// Record a reassembled RESP block so --trace stays useful with streaming on.
 	a.traceReassembled("RESP", out)
-	return a.recoverToolCalls(out, tools), nil, false
+	return a.finishReply(out, tools, d), nil, false
 }
 
 // traceReassembled writes a trace block under marker for an assembled
