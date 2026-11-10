@@ -490,8 +490,12 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		Stream: true, StreamOptions: &wireStreamOptions{IncludeUsage: true},
 	}
 	var nImages, b64Bytes int
+	names := newWireNames(req.Tools)
 	for _, m := range req.Messages {
-		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
+		if m.Name != "" {
+			wm.Name = names.wire(m.Name)
+		}
 		for _, att := range m.Attachments {
 			switch {
 			case req.Attachments && len(att.Data) > 0:
@@ -509,7 +513,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		}
 		for _, tc := range m.ToolCalls {
 			w := wireToolCall{ID: tc.ID, Type: "function"}
-			w.Function.Name = tc.Name
+			w.Function.Name = names.wire(tc.Name)
 			// The OpenAI wire format requires arguments to be a JSON string;
 			// some models emit an empty string, which strict backends (LM
 			// Studio chat templates) reject with a 500 when the conversation
@@ -525,7 +529,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	}
 	for _, t := range req.Tools {
 		wt := wireTool{Type: "function"}
-		wt.Function.Name = t.Name
+		wt.Function.Name = names.wire(t.Name)
 		wt.Function.Description = t.Description
 		wt.Function.Parameters = t.Parameters
 		payload.Tools = append(payload.Tools, wt)
@@ -820,8 +824,17 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema, d resolvedDia
 // finishReply applies the dialect's reply steps: XML tool-call recovery when
 // on, then the family's finish hook.
 func (a *Adapter) finishReply(out CompletionResp, tools []ToolSchema, d resolvedDialect) CompletionResp {
+	// The model saw provider-safe wire names; map them back to fuse's names so
+	// dispatch is unchanged. XML recovery runs on wire names (that is what the
+	// model wrote in text) and its calls are decoded after.
+	names := newWireNames(tools)
+	names.decode(out.ToolCalls)
 	if d.caps.recoverToolCalls {
-		out = a.recoverToolCalls(out, tools)
+		hadCalls := len(out.ToolCalls) > 0
+		out = a.recoverToolCalls(out, names.wireSchemas(tools))
+		if !hadCalls {
+			names.decode(out.ToolCalls)
+		}
 	}
 	if d.finish != nil {
 		d.finish(&out, tools, d.caps)

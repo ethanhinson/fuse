@@ -360,7 +360,7 @@ func TestMCPStaticAndBearerAuthConnect(t *testing.T) {
 			if len(calls) == 0 {
 				t.Fatal("no model call")
 			}
-			if names := strings.Join(calls[0].toolNames(), " "); !strings.Contains(names, "mcp:stub/echo") {
+			if names := strings.Join(calls[0].toolNames(), " "); !strings.Contains(names, "mcp__stub__echo") {
 				t.Errorf("model is not offered the server's tool; tools = %s", names)
 			}
 		})
