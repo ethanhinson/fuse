@@ -211,6 +211,11 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 	// The child gets its own tracker (nil) — per-agent isolation.
 	var unknown []string
 	for _, n := range names {
+		// The model only ever sees provider-safe wire names, so a requested
+		// name may be the wire form of an internal one (mcp__srv__tool).
+		if _, ok := r.byName[n]; !ok {
+			n = model.ResolveToolName(r.order, n)
+		}
 		if t, ok := r.byName[n]; ok {
 			out.Register(t)
 		} else {
