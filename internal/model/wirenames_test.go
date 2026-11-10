@@ -19,7 +19,7 @@ func toolsNamed(names ...string) []ToolSchema {
 }
 
 func TestWireNames_EncodeAndBuiltinsUnchanged(t *testing.T) {
-	w := newWireNames(toolsNamed("read_file", "bash", "mcp:playwright/browser_navigate"))
+	w := newWireNames(toolsNamed("read_file", "bash", "mcp:playwright/browser_navigate"), nil)
 	if got := w.wire("read_file"); got != "read_file" {
 		t.Fatalf("built-in changed: %q", got)
 	}
@@ -38,7 +38,7 @@ func TestWireNames_LongAndCollisionUnique(t *testing.T) {
 	long1 := "mcp:" + strings.Repeat("s", 40) + "/" + strings.Repeat("t", 40)
 	long2 := "mcp:" + strings.Repeat("s", 40) + "/" + strings.Repeat("t", 39) + "u"
 	names := []string{"mcp:a/b", "mcp__a__b", "mcp:a:b", "mcp:a/b?", "mcp:a/b!", long1, long2}
-	w := newWireNames(toolsNamed(names...))
+	w := newWireNames(toolsNamed(names...), nil)
 	seen := map[string]string{}
 	for _, n := range names {
 		g := w.wire(n)
@@ -56,7 +56,7 @@ func TestWireNames_LongAndCollisionUnique(t *testing.T) {
 	if w.wire("mcp__a__b") != "mcp__a__b" {
 		t.Fatalf("already-safe name must be untouched")
 	}
-	w2 := newWireNames(toolsNamed(names...))
+	w2 := newWireNames(toolsNamed(names...), nil)
 	for _, n := range names {
 		if w.wire(n) != w2.wire(n) {
 			t.Fatalf("unstable encoding for %q", n)

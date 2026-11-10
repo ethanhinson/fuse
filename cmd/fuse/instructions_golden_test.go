@@ -58,6 +58,10 @@ func TestLoopRootPromptGolden(t *testing.T) {
 // for a tool-less loop) sends on the production loop-server wiring: model,
 // messages and every tool schema. Per-process values are normalized.
 func TestLoopFirstRequestGolden(t *testing.T) {
+	// web_search is offered only when a search provider is configured; keep the
+	// golden independent of the developer's shell.
+	t.Setenv("BRAVE_SEARCH_API_KEY", "")
+	t.Setenv("TAVILY_API_KEY", "")
 	raw := &rawCapture{next: &recordingGateway{}}
 	rt := runtime.New(harnessServerWith(t, harnessOperator, raw))
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})

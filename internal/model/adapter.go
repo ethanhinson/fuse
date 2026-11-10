@@ -490,7 +490,8 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		Stream: true, StreamOptions: &wireStreamOptions{IncludeUsage: true},
 	}
 	var nImages, b64Bytes int
-	names := newWireNames(req.Tools)
+	names := newWireNames(req.Tools, req.Messages)
+	ts := toolSet{schemas: req.Tools, names: names}
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
 		if m.Name != "" {
@@ -578,9 +579,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	attempts := 0
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
-		resp, err, retryable := a.completeOnce(ctx, body, req.Tools, d)
+		resp, err, retryable := a.completeOnce(ctx, body, ts, d)
 		if err == nil && d.caps.retryEmptyUnstreamed && replyEmpty(resp) {
-			resp = a.completeUnstreamed(ctx, payload, req.Tools, d, resp)
+			resp = a.completeUnstreamed(ctx, payload, ts, d, resp)
 		}
 		if err == nil {
 			// Reconcile the pre-dispatch estimate with the gateway's reported usage so
@@ -693,7 +694,7 @@ func replyEmpty(r CompletionResp) bool {
 // and [DONE] while the same request answers fully when buffered, so the empty stream
 // says nothing about the model. It returns the original reply if this fails too, and
 // the agent loop decides what to do about an empty reply.
-func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools []ToolSchema, d resolvedDialect, empty CompletionResp) CompletionResp {
+func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools toolSet, d resolvedDialect, empty CompletionResp) CompletionResp {
 	payload.Stream = false
 	payload.StreamOptions = nil
 	body, err := json.Marshal(payload)
@@ -712,7 +713,7 @@ func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools
 
 // completeOnce performs a single bounded request attempt. retryable reports
 // whether the failure class is worth another attempt.
-func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools toolSet, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	attemptCtx, cancelAttempt := context.WithCancel(ctx)
 	defer cancelAttempt()
 	if a.RequestTimeout > 0 {
@@ -789,7 +790,7 @@ func (i idleResetReader) Read(p []byte) (int, error) {
 }
 
 // readBuffered parses a whole non-streamed chat-completion JSON body.
-func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) readBuffered(body io.Reader, tools toolSet, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		return CompletionResp{}, fmt.Errorf("read gateway response: %w", err), true
@@ -821,23 +822,30 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema, d resolvedDia
 	return a.finishReply(out, tools, d), nil, false
 }
 
+// toolSet is the request's advertised tools plus its wire-name mapping, handed
+// to the reply readers so they decode with the exact mapping the request used.
+type toolSet struct {
+	schemas []ToolSchema
+	names   *wireNames
+}
+
 // finishReply applies the dialect's reply steps: XML tool-call recovery when
 // on, then the family's finish hook.
-func (a *Adapter) finishReply(out CompletionResp, tools []ToolSchema, d resolvedDialect) CompletionResp {
+func (a *Adapter) finishReply(out CompletionResp, tools toolSet, d resolvedDialect) CompletionResp {
 	// The model saw provider-safe wire names; map them back to fuse's names so
 	// dispatch is unchanged. XML recovery runs on wire names (that is what the
 	// model wrote in text) and its calls are decoded after.
-	names := newWireNames(tools)
+	names := tools.names
 	names.decode(out.ToolCalls)
 	if d.caps.recoverToolCalls {
 		hadCalls := len(out.ToolCalls) > 0
-		out = a.recoverToolCalls(out, names.wireSchemas(tools))
+		out = a.recoverToolCalls(out, names.wireSchemas(tools.schemas))
 		if !hadCalls {
 			names.decode(out.ToolCalls)
 		}
 	}
 	if d.finish != nil {
-		d.finish(&out, tools, d.caps)
+		d.finish(&out, tools.schemas, d.caps)
 	}
 	return out
 }
@@ -915,7 +923,7 @@ func repeatsAtTail(s string) bool {
 // retryableStreamError). A reply degenerating into repetition is cut off early
 // and retried: returning here unwinds completeOnce, whose deferred cancel
 // aborts the request so the provider stops generating.
-func (a *Adapter) readStream(body io.Reader, tools []ToolSchema, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) readStream(body io.Reader, tools toolSet, d resolvedDialect) (_ CompletionResp, err error, retryable bool) {
 	var content strings.Builder
 	// Each reasoning field is collected separately: a gateway may send the same
 	// text in several, and only one is kept.
@@ -1022,6 +1030,9 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema, d resolvedDiale
 // traceReassembled writes a trace block under marker for an assembled
 // response, shaped like the buffered JSON so trace output is comparable across
 // both paths ("RESP" for a streamed reply, "RECOVERED" after the XML fallback).
+//
+// RESP and RECOVERED blocks show wire (provider-safe) tool names, not fuse's
+// internal names: they are traced before finishReply decodes them.
 func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 	if a.trace == nil {
 		return
