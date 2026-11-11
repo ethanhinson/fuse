@@ -41,9 +41,10 @@ func (a *Agent) outputCeiling() int {
 
 // clampOutputCap keeps prompt + cap inside the context window, because some
 // providers reject the request otherwise. It never lowers the cap below
-// outputCapFloor, and a cap of 0 stays unset.
+// outputCapFloor, and a cap of 0 stays unset. An unknown window (0) never
+// clamps.
 func clampOutputCap(limit, window, estimate int) int {
-	if limit <= 0 {
+	if limit <= 0 || window <= 0 {
 		return limit
 	}
 	room := window - estimate

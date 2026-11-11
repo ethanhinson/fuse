@@ -67,9 +67,9 @@ type Agent struct {
 	// maxTokens to; 0 uses defaultOutputCeilingFactor.
 	outputCeilingTokens int
 
-	// ContextWindow is the model's context size in tokens; 0 uses the
-	// default (128k). The loop prunes old tool results when the estimated
-	// request approaches this budget.
+	// ContextWindow is the model's context size in tokens; 0 means unknown,
+	// so the loop does no proactive pruning, and learns a window for the run
+	// if the provider rejects a request for length (see Run).
 	ContextWindow int
 
 	// LoopApproval, when set, makes the doom-loop detector interactive: on a

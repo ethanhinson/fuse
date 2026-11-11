@@ -509,3 +509,37 @@ func TestRunKeepsSpawnAgentWhenPredicateFalse(t *testing.T) {
 		t.Fatalf("predicate false: spawn_agent should remain; got %v", toolNames(comp.gotTools))
 	}
 }
+
+// TestRunUnknownWindowSendsLargeContextUnpruned pins that an unconfigured
+// context window is unknown: no proactive pruning, no abort, no output clamp.
+func TestRunUnknownWindowSendsLargeContextUnpruned(t *testing.T) {
+	var req model.CompletionReq
+	calls := 0
+	comp := &capturingCompleter{onCall: func(r model.CompletionReq) { req = r; calls++ }}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 5, 8000)
+	if a.ContextWindow != 0 {
+		t.Fatalf("ContextWindow = %d, want 0 (unknown)", a.ContextWindow)
+	}
+	big := strings.Repeat("x", 200_000)
+	history := []model.Message{
+		{Role: "user", Content: "task"},
+		{Role: "tool", ToolCallID: "1", Content: big},
+		{Role: "tool", ToolCallID: "2", Content: big},
+		{Role: "tool", ToolCallID: "3", Content: big},
+	}
+	out, err := a.Run(context.Background(), history)
+	if err != nil {
+		t.Fatalf("unknown window must not error, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("completer calls = %d, want 1", calls)
+	}
+	for i, m := range out {
+		if m.Content == prunedStub {
+			t.Fatalf("message %d was pruned with an unknown window", i)
+		}
+	}
+	if req.MaxTokens != 8000 {
+		t.Fatalf("MaxTokens = %d, want 8000 (no window clamp)", req.MaxTokens)
+	}
+}
