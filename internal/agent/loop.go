@@ -437,6 +437,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// rejected request, prompt + output cap (learnContextWindow), and it only
 	// goes down from there.
 	window := a.ContextWindow
+	if window <= 0 {
+		// A window learned earlier (an earlier Run on this session) applies
+		// until the provider says otherwise.
+		window = a.learnedWindow
+	}
 	// learnedFrom is the provider error the current window was learned from; nil
 	// while the window is configured or still unknown.
 	var learnedFrom error
@@ -699,6 +704,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					rejectedPrompt = estimate
 					if learned, ok := learnContextWindow(window, estimate, outputCapSent); ok {
 						window = learned
+						a.learnedWindow = learned
 						learnedFrom = err
 						a.renderer.Errorf("context: %s rejected a ~%d-token request (prompt ~%d + output cap %d) for length; managing context against a learned window of ~%d tokens for the rest of this run (set context_window for this model to skip the rejected request)", a.modelID, estimate+max(req.MaxTokens, 0), estimate, max(req.MaxTokens, 0), window)
 						turn--

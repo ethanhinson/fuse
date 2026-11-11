@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -195,6 +196,10 @@ type ShellModel struct {
 	slashReg  *SlashRegistry
 	completer *slashCompleter
 	build     AgentBuilder
+	// learned carries the context window a model's provider rejection taught
+	// one exchange's agent to the next exchange's fresh agent. A pointer: the
+	// model is copied by value on every Update.
+	learned *learnedWindow
 
 	// sessionMode is the read handle on the session's active permission mode —
 	// the single source shared with per-turn gate construction (Shift+Tab and
@@ -305,6 +310,7 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 		slashReg:            slashReg,
 		completer:           completer,
 		build:               build,
+		learned:             &learnedWindow{},
 		sessionMode:         sessionMode,
 		classifierAvailable: classifierAvailable,
 		clip:                newSystemClipboard(),
@@ -1178,6 +1184,8 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 // switchModel makes alias the active model. The caller has already resolved it.
 func (m *ShellModel) switchModel(alias string) {
 	m.alias = alias
+	// A learned window belongs to one model.
+	m.learned.reset()
 	// Keep the agents-tab tree root in sync so it renders the current model,
 	// not the one snapshotted at construction.
 	if m.tree != nil {
@@ -1260,6 +1268,7 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	alias := m.alias
 	history := m.history
 	build := m.build
+	learned := m.learned
 
 	tree := m.tree // capture for closure
 	run := func() tea.Msg {
@@ -1277,7 +1286,11 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 			ch <- AgentDoneMsg{History: history}
 			return nil
 		}
+		// Each exchange gets a fresh agent; hand it the window an earlier one
+		// learned for this model so it does not pay the rejection again.
+		a.SetLearnedContextWindow(learned.get(alias))
 		updated, rerr := a.Run(context.Background(), history)
+		learned.set(alias, a.LearnedContextWindow())
 		if rerr != nil {
 			ch <- AgentErrMsg{Err: rerr.Error()}
 		}
@@ -1990,3 +2003,33 @@ func modeStatus(mode permissions.PermissionMode, classifierAvailable bool) strin
 	}
 	return s
 }
+
+// learnedWindow is the session's learned context window for one model alias.
+type learnedWindow struct {
+	mu     sync.Mutex
+	alias  string
+	tokens int
+}
+
+func (l *learnedWindow) get(alias string) int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.alias != alias {
+		return 0
+	}
+	return l.tokens
+}
+
+func (l *learnedWindow) set(alias string, tokens int) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.alias, l.tokens = alias, tokens
+}
+
+func (l *learnedWindow) reset() { l.set("", 0) }
