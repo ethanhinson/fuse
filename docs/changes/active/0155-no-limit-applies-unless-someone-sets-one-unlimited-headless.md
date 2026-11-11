@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [83]
 spec: 'docs/superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md'
 plan: 'docs/superpowers/plans/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless.md'
-results:
+results: 'docs/results/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md](../../superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md) |
 | Plan | [2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless.md](../../superpowers/plans/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) |
+| Results | [2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless-results.md](../../results/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless-results.md) |
 | ADRs | [ADR-0083](../../adrs/0083-an-unconfigured-context-window-is-unknown-and-is-learned-fro.md) |
 <!-- docket:artifacts:end -->
 
