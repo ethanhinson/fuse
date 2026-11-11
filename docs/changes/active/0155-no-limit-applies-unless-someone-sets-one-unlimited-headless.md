@@ -2,7 +2,7 @@
 id: 155
 slug: 'no-limit-applies-unless-someone-sets-one-unlimited-headless'
 title: 'No limit applies unless someone sets one: unlimited headless turns and no assumed context window'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/no-limit-applies-unless-someone-sets-one-unlimited-headless'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/175'
 blocked_by:
 reconciled: true
 ---
@@ -61,3 +61,12 @@ Two defaults cap a run that nobody asked to cap. A headless run with max_turns u
 ### 2026-11-11
 
 Unchanged against main 1d57c6e. headlessTurnBackstop, SetMaxTurnsExplicit, DefaultContextWindow and the 128k TUI and doc text are all still present as the spec describes.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 420d9f9803f77fe6f82d59c155abc38ed947a2bf
+ran_at:   2026-11-11T01:29:21Z
+<!-- docket:build-evidence:end -->
