@@ -79,6 +79,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0080](0080-loop-artifacts-are-addressed-by-tenant-scoped-refs-never-fil.md) — Loop artifacts are addressed by tenant-scoped refs, never filesystem paths (Accepted) ← change #128 · relates to ADR-0024, ADR-0030, ADR-0031
 - [ADR-0081](0081-resume-is-a-full-fold-of-the-stream-orphans-are-failed-durab.md) — Resume is a full fold of the stream; orphans are failed durably, never silently dropped or retried (Accepted) ← change #127
 - [ADR-0082](0082-per-loop-workspace-adapter-and-confined-file-tools.md) — Per-loop workspace adapter and confined file tools (Accepted)
+- [ADR-0083](0083-an-unconfigured-context-window-is-unknown-and-is-learned-fro.md) — An unconfigured context window is unknown and is learned from provider length rejections (Accepted) ← change #155
 
 ## Superseded / Reversed
 
