@@ -15,22 +15,18 @@ import (
 func TestResolveMaxTurns(t *testing.T) {
 	ptr := func(n int) *int { return &n }
 	tests := []struct {
-		name        string
-		cfg         *int
-		interactive bool
-		want        int
+		name string
+		cfg  *int
+		want int
 	}{
-		{"unset interactive is unlimited", nil, true, 0},
-		{"unset headless backstops at 100", nil, false, 100},
-		{"explicit zero is unlimited (interactive)", ptr(0), true, 0},
-		{"explicit zero is unlimited (headless)", ptr(0), false, 0},
-		{"explicit positive caps (interactive)", ptr(9), true, 9},
-		{"explicit positive caps (headless)", ptr(9), false, 9},
+		{"unset is unlimited", nil, 0},
+		{"explicit zero is unlimited", ptr(0), 0},
+		{"explicit positive caps", ptr(9), 9},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveMaxTurns(tt.cfg, tt.interactive); got != tt.want {
-				t.Errorf("resolveMaxTurns(%v, %v) = %d, want %d", tt.cfg, tt.interactive, got, tt.want)
+			if got := resolveMaxTurns(tt.cfg); got != tt.want {
+				t.Errorf("resolveMaxTurns(%v) = %d, want %d", tt.cfg, got, tt.want)
 			}
 		})
 	}
@@ -39,10 +35,10 @@ func TestResolveMaxTurns(t *testing.T) {
 // TestOneShotBudgetPostureUnderApproveAll is the regression for the review
 // CONCERN: `fuse "task" --approve-all` on a TTY must NOT resolve to the
 // interactive (unlimited-turns, auto-continue-loop) posture. --approve-all is a
-// scripted "don't ask me" posture, so the turn/loop budget must be headless: an
-// unset max_turns backstops at 100, and the loop hook is nil so a doom-loop trip
-// aborts with the structured error instead of being auto-approved forever.
-// Explicit max_turns config still wins.
+// scripted "don't ask me" posture, so the loop budget must be headless: the loop
+// hook is nil so a doom-loop trip aborts with the structured error instead of
+// being auto-approved forever. There is no turn backstop; an unset max_turns is
+// unlimited and an explicit one wins regardless of posture.
 func TestOneShotBudgetPostureUnderApproveAll(t *testing.T) {
 	ptr := func(n int) *int { return &n }
 	tests := []struct {
@@ -72,14 +68,11 @@ func TestOneShotBudgetPostureUnderApproveAll(t *testing.T) {
 			if !tt.wantPosture && hook != nil {
 				t.Error("headless posture must leave the loop hook nil (abort on trip)")
 			}
-			// An unset max_turns must backstop at 100 in the headless posture,
-			// stay unlimited (0) interactive; an explicit cap always wins.
-			if got := resolveMaxTurns(nil, got); tt.wantPosture && got != 0 {
-				t.Errorf("interactive unset max_turns = %d, want 0 (unlimited)", got)
-			} else if !tt.wantPosture && got != headlessTurnBackstop {
-				t.Errorf("headless unset max_turns = %d, want %d (backstop)", got, headlessTurnBackstop)
+			// An unset max_turns is unlimited in every posture; an explicit cap wins.
+			if got := resolveMaxTurns(nil); got != 0 {
+				t.Errorf("unset max_turns = %d, want 0 (unlimited)", got)
 			}
-			if got := resolveMaxTurns(ptr(9), got); got != 9 {
+			if got := resolveMaxTurns(ptr(9)); got != 9 {
 				t.Errorf("explicit max_turns must win regardless of posture, got %d", got)
 			}
 		})

@@ -110,38 +110,25 @@ You have a ` + "`spawn_agent`" + ` tool. It runs a child agent to completion and
 - When you do spawn several children, make all the spawn_agent calls in one response so they run concurrently, then continue once their results arrive.
 - By default (no ` + "`tools`" + ` argument) a child inherits your full tool set.`
 
-// headlessTurnBackstop is the generous default cap applied to headless entry
-// points (one-shot, non-TTY, mcp-server, research-probe) when max_turns is
-// unset — nothing can interrupt a runaway there, so a backstop stays. The
-// interactive shell has no such cap (unlimited by default). See change 0038.
-const headlessTurnBackstop = 100
-
 // resolveMaxTurns turns the presence-aware config value into the concrete cap
-// the agent loop honors. This decision is context-aware and belongs at the
-// call site (interactivity is known here, not in the context-free config
-// resolve nor the uniform agent.New):
-//
-//   - unset (nil) + interactive ⇒ 0 (unlimited).
-//   - unset (nil) + headless    ⇒ headlessTurnBackstop.
-//   - explicit (non-nil)        ⇒ the value verbatim (0 = unlimited, N>0 = cap).
-func resolveMaxTurns(cfgMaxTurns *int, interactive bool) int {
+// the agent loop honors. Unset (nil) is unlimited in every entry point, the same
+// as an explicit 0; N > 0 caps every entry point. What stops a stuck headless run
+// is the doom-loop detector and the opt-in max_turns, max_run_tokens and
+// max_run_duration limits, not an assumed turn count.
+func resolveMaxTurns(cfgMaxTurns *int) int {
 	if cfgMaxTurns != nil {
 		return *cfgMaxTurns
 	}
-	if interactive {
-		return 0
-	}
-	return headlessTurnBackstop
+	return 0
 }
 
-// oneShotBudgetInteractive resolves the turn/loop budget posture for the
+// oneShotBudgetInteractive resolves the doom-loop approval posture for the
 // one-shot entry point, which is NOT the same as the approval-channel posture.
 // A human is reachable on a TTY (driving the y/N/a approval prompt), but
-// --approve-all is an explicit "don't ask me" scripted posture: with it set,
-// the budget must be headless even on a TTY, so an unset max_turns backstops at
-// 100 (resolveMaxTurns) and the doom-loop hook stays nil (loopApprovalFor) —
-// otherwise a doom loop under --approve-all auto-continues every 3 turns forever
-// with no backstop. Explicit max_turns config still wins via resolveMaxTurns.
+// --approve-all is an explicit "don't ask me" scripted posture: with it set the
+// posture is headless even on a TTY, so the doom-loop hook stays nil
+// (loopApprovalFor) and a trip aborts instead of auto-continuing every 3 turns
+// forever. It does not affect the turn cap (resolveMaxTurns).
 // See change 0038 (review CONCERN).
 func oneShotBudgetInteractive(tty, approveAll bool) bool {
 	return tty && !approveAll
@@ -493,7 +480,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	// this agent has not read, and edit_file detects staleness.
 	toolReg.WithFileTracker(tools.NewFileTracker())
 
-	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
+	maxTurns := resolveMaxTurns(cfg.MaxTurns)
 	if strings.HasPrefix(mc.ID, "cli/") {
 		fuseExe, err := os.Executable()
 		if err != nil {
@@ -513,7 +500,6 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.SetOutputCeiling(mc.MaxTokensCeiling)
-	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.ReasoningEffort = mc.ReasoningEffort
 	a.ReplayReasoning = !mc.DropReasoning
@@ -697,7 +683,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	// this agent has not read, and edit_file detects staleness.
 	toolReg.WithFileTracker(tools.NewFileTracker())
 
-	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
+	maxTurns := resolveMaxTurns(cfg.MaxTurns)
 	// buildAgentCore is the single chokepoint both gate construction and
 	// prompt composition flow through: drop the spawn_agent instructions for an
 	// agent that cannot spawn (see prompt_blocks.go), then advertise the
@@ -732,7 +718,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
-		a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 		// Session observer (change 0061). SetObserver maps nil to NoopObserver, so
 		// a caller that does not opt in keeps today's behavior exactly.
 		a.SetObserver(observer)
@@ -747,7 +732,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.SetOutputCeiling(mc.MaxTokensCeiling)
-	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.ReasoningEffort = mc.ReasoningEffort
 	a.ReplayReasoning = !mc.DropReasoning

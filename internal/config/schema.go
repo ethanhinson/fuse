@@ -278,10 +278,10 @@ type Config struct {
 	// Dirs is empty the call site falls back to skills.DefaultDirs().
 	Skills SkillsConfig
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
-	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
-	// context-aware backstop (unlimited in the interactive shell, 100 headless);
-	// a non-nil 0 = explicitly unlimited everywhere; a non-nil N>0 caps every
-	// context. Same omitted-key discipline as Permissions.SessionAllow. (0038)
+	// from an explicit `max_turns: 0`. nil = unset, which is unlimited in every
+	// entry point, the same as an explicit 0; a non-nil N>0 caps every entry
+	// point. The pointer stays so layered configs can tell an omitted key from an
+	// explicit override. Same omitted-key discipline as Permissions.SessionAllow.
 	MaxTurns *int
 	// NoProgressCalls is how many tool calls a headless run may make without a
 	// file change before the model is nudged. nil = the agent default; 0 = off.
@@ -523,9 +523,8 @@ func Default() Config {
 		Observability: ObservabilityConfig{Traces: TracesObservabilityConfig{SampleRatio: 1}},
 		Gateway:       Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
 		Models:        ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
-		// MaxTurns intentionally left nil (unset): the context-aware backstop is
-		// applied at the call site in cmd/fuse (unlimited shell / 100 headless),
-		// not baked into the config default. See change 0038.
+		// MaxTurns intentionally left nil (unset): unlimited in every entry point,
+		// the same as an explicit 0.
 		//
 		// Per-turn output ceiling. 16384 (up from 8192) so a full research
 		// synthesis — report body plus its numbered source list — is not cut

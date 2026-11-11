@@ -201,9 +201,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	// The turn/loop BUDGET posture is distinct from the approval channel:
 	// --approve-all is a scripted "don't ask me" posture, so even on a TTY it
-	// resolves headless — an unset max_turns backstops at 100, and the doom-loop
-	// hook stays nil so a trip aborts instead of auto-continuing forever.
-	// Explicit max_turns config still wins. (0038, review CONCERN)
+	// resolves headless: the doom-loop hook stays nil so a trip aborts instead of
+	// auto-continuing forever. This decides the loop posture only; an unset
+	// max_turns is unlimited either way. (0038, review CONCERN)
 	oneShotBudget := oneShotBudgetInteractive(oneShotInteractive, *approveAll)
 
 	// Skills: load the real set (including the embedded research skill) so
