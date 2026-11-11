@@ -59,7 +59,12 @@ Replaces the 16KB per-result chop and the 360KB hard turn-failure.
   `context_window` config. An unset window is unknown: no proactive pruning,
   and on the first provider length rejection the loop learns a window from
   the rejected request's size, then prunes, summarizes and aborts against it
-  for the rest of the run.
+  for the rest of the run. The size counts the output cap the request sent,
+  since many providers reject prompt + max_tokens over the window, and later
+  requests keep prompt + cap under 95% of the learned window, so a prompt
+  that fits gets a smaller cap rather than a pruned context. If the same
+  prompt is refused again with the smaller cap, the window is learned from
+  the prompt alone.
 - **Recency pruning instead of turn failure**: at 85% of window, stub tool
   results older than the protected tail (newest ~40k estimated tokens of
   tool output; user/assistant messages never touched, so tool pairing stays

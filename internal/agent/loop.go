@@ -374,15 +374,27 @@ func isContextLengthErr(err error) bool {
 }
 
 // learnContextWindow returns the window to manage context against after the
-// provider rejected a request of about rejected tokens for length, when the
-// window was not configured. current is 0 (unknown) or a window learned earlier
-// in this run. A learned window only ever goes down. ok is false when nothing
-// can be learned (no size to learn from, or no lower window).
-func learnContextWindow(current, rejected int) (window int, ok bool) {
-	if rejected <= 0 || (current > 0 && rejected >= current) {
+// provider rejected a request for length, when the window was not configured.
+// current is 0 (unknown) or a window learned earlier in this run; prompt is the
+// rejected request's prompt estimate and outputCap the max_tokens it sent (0
+// for none). Many providers (OpenAI-compatible servers, vLLM) count prompt +
+// max_tokens against the window, so the size learned is prompt + outputCap.
+// When that is not below current, it falls back to the prompt alone. A learned
+// window only ever goes down. ok is false when nothing can be learned (no size
+// to learn from, or no lower window).
+func learnContextWindow(current, prompt, outputCap int) (window int, ok bool) {
+	if prompt <= 0 {
 		return current, false
 	}
-	return rejected, true
+	if outputCap < 0 {
+		outputCap = 0
+	}
+	for _, size := range []int{prompt + outputCap, prompt} {
+		if current <= 0 || size < current {
+			return size, true
+		}
+	}
+	return current, false
 }
 
 // Run executes the agent loop over history (whose last message is the user
@@ -422,11 +434,17 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// window is the model's context size; 0 means unknown, in which case the
 	// loop sends requests as they are and does no proactive pruning. With no
 	// configured window, a provider length rejection sets it to the size of the
-	// rejected request (learnContextWindow), and it only goes down from there.
+	// rejected request, prompt + output cap (learnContextWindow), and it only
+	// goes down from there.
 	window := a.ContextWindow
 	// learnedFrom is the provider error the current window was learned from; nil
 	// while the window is configured or still unknown.
 	var learnedFrom error
+	// rejectedPrompt is the prompt estimate of the last request rejected for
+	// length with no successful reply since; 0 when there is none. A rejection
+	// whose prompt did not shrink since the previous one shows that lowering the
+	// output cap alone did not help, so the window is learned from the prompt.
+	rejectedPrompt := 0
 	// outputCap starts at the configured max_tokens and rises when a reply is cut
 	// off. It stays raised for the run: the model that needed more room on this
 	// turn usually needs it on the next, and a cap is only a limit, not a spend.
@@ -615,11 +633,18 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if a.expectsSchema != nil {
 			schemas = withReturnResultTool(schemas, a.expectsSchema)
 		}
+		// capWindow is what prompt + output cap must fit in. A learned window is a
+		// size the provider refused, so the real one is smaller: keep the whole
+		// request under the same 95% line the prompt is held to, strictly below it.
+		capWindow := window
+		if learnedFrom != nil {
+			capWindow = abortAt
+		}
 		req := model.CompletionReq{
 			Model:           a.modelID,
 			Messages:        a.withSystem(messages),
 			Tools:           schemas,
-			MaxTokens:       clampOutputCap(outputCap, window, estimate),
+			MaxTokens:       clampOutputCap(outputCap, capWindow, estimate),
 			ReasoningEffort: a.ReasoningEffort,
 			ReplayReasoning: a.ReplayReasoning,
 			Dialect:         a.Dialect,
@@ -656,16 +681,26 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			if isContextLengthErr(err) {
 				if a.ContextWindow <= 0 {
 					// No configured window: learn one from what the provider just
-					// refused, then go round the turn again so the normal
-					// prune/summarize/abort path runs against it. This ends: the
-					// next pass has estimate ~= window > budget, so it prunes and
-					// either sends at most abortAt (95% of the window) or aborts. A
-					// later rejection can therefore only learn a smaller window, and
-					// learnContextWindow refuses anything not strictly lower.
-					if learned, ok := learnContextWindow(window, estimate); ok {
+					// refused, prompt + output cap, then go round the turn again so
+					// the normal prune/summarize/abort path and the output-cap
+					// clamp run against it. A prompt that fits gets a smaller cap,
+					// not a pruned context. The cap counts only when the retry can
+					// lower it: the clamp never goes below outputCapFloor, and if
+					// the same prompt is refused again with the smaller cap, the
+					// cap was not the problem. Otherwise learn from the prompt
+					// alone. This ends: every learned window is strictly lower than
+					// the one before (learnContextWindow refuses anything else, and
+					// the run then ends with the provider's error), and every pass
+					// either sends a request or aborts.
+					outputCapSent := req.MaxTokens
+					if outputCapSent <= outputCapFloor || (rejectedPrompt > 0 && estimate >= rejectedPrompt) {
+						outputCapSent = 0
+					}
+					rejectedPrompt = estimate
+					if learned, ok := learnContextWindow(window, estimate, outputCapSent); ok {
 						window = learned
 						learnedFrom = err
-						a.renderer.Errorf("context: %s rejected a ~%d-token request for length; managing context against a learned window of ~%d tokens for the rest of this run (set context_window for this model to skip the rejected request)", a.modelID, estimate, window)
+						a.renderer.Errorf("context: %s rejected a ~%d-token request (prompt ~%d + output cap %d) for length; managing context against a learned window of ~%d tokens for the rest of this run (set context_window for this model to skip the rejected request)", a.modelID, estimate+max(req.MaxTokens, 0), estimate, max(req.MaxTokens, 0), window)
 						turn--
 						continue
 					}
@@ -685,12 +720,15 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
 		}
+		rejectedPrompt = 0
 		// A reply cut off before it decided anything is not an answer: retry the turn,
-		// never treat it as the end of the work. See cutOffPlan for how.
+		// never treat it as the end of the work. See cutOffPlan for how. A raise is
+		// bounded by the same capWindow the request was clamped to, so a raised cap
+		// is never clamped straight back down on the next pass.
 		unusable := replyUnusable(resp, req.MaxTokens)
 		plan := cutOffPlan{}
 		if unusable {
-			plan = planCutOff(resp, req.MaxTokens, a.outputCeiling(), window, estimate, cutOffRetries)
+			plan = planCutOff(resp, req.MaxTokens, a.outputCeiling(), capWindow, estimate, cutOffRetries)
 		}
 		retrying := plan.retry
 		// Partial text survives the final failure so the human can see it. A cut-off
