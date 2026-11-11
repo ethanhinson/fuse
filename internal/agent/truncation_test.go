@@ -494,3 +494,12 @@ func TestSummarizerFailsWhenRetryStaysEmpty(t *testing.T) {
 		t.Fatalf("empty summary accepted: %q", out)
 	}
 }
+
+func TestClampOutputCapUnknownWindow(t *testing.T) {
+	if got := clampOutputCap(8000, 0, 500_000); got != 8000 {
+		t.Fatalf("clampOutputCap unknown window = %d, want 8000", got)
+	}
+	if got := nextOutputCap(8000, 32000, 0, 500_000); got != 16000 {
+		t.Fatalf("nextOutputCap unknown window = %d, want 16000", got)
+	}
+}

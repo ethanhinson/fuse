@@ -44,9 +44,7 @@ const returnResultCap = 2
 // the delta appended since is estimated at bytes/4, so the estimate resets to
 // ground truth every turn and error never compounds.
 const (
-	// DefaultContextWindow is used when the model config does not set one.
-	DefaultContextWindow = 128_000
-	bytesPerToken        = 4
+	bytesPerToken = 4
 	// pruneThresholdPct: prune when the estimated request exceeds this
 	// percentage of the context window.
 	pruneThresholdPct = 85
@@ -409,12 +407,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	deniedCount := map[string]int{}
 	nudgedFP := map[string]bool{}
 
+	// window is the model's context size; 0 means unknown, in which case the
+	// loop sends requests as they are and does no proactive pruning.
 	window := a.ContextWindow
-	if window <= 0 {
-		window = DefaultContextWindow
-	}
-	budget := window * pruneThresholdPct / 100
-	abortAt := window * abortThresholdPct / 100
 	// outputCap starts at the configured max_tokens and rises when a reply is cut
 	// off. It stays raised for the run: the model that needed more room on this
 	// turn usually needs it on the next, and a cap is only a limit, not a spend.
@@ -475,7 +470,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 
 		evictOldAttachments(messages, MaxLiveAttachments)
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
-		if estimate > budget {
+		budget := window * pruneThresholdPct / 100
+		abortAt := window * abortThresholdPct / 100
+		if window > 0 && estimate > budget {
 			// Tier 2 (change 0027): before the deterministic stub prune, run a
 			// bounded LLM summarization pass over the old tool-result region and
 			// inject a single anchored ODSNF summary at the protected-region
