@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/no-limit-applies-unless-someone-sets-one-unlimited-headless'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -52,3 +52,9 @@ Two defaults cap a run that nobody asked to cap. A headless run with max_turns u
 - Per-tenant limits for hosted loops.
 - Asking a gateway or provider API for a model's context window.
 - Changes to the pruning and summarization algorithms themselves when the window is known.
+
+## Reconcile log
+
+### 2026-11-11
+
+Unchanged against main 1d57c6e. headlessTurnBackstop, SetMaxTurnsExplicit, DefaultContextWindow and the 128k TUI and doc text are all still present as the spec describes.
