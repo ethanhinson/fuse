@@ -707,6 +707,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 						a.learnedWindow = learned
 						learnedFrom = err
 						a.renderer.Errorf("context: %s rejected a ~%d-token request (prompt ~%d + output cap %d) for length; managing context against a learned window of ~%d tokens for the rest of this run (set context_window for this model to skip the rejected request)", a.modelID, estimate+max(req.MaxTokens, 0), estimate, max(req.MaxTokens, 0), window)
+						a.emit(event.KindContextWindowLearned, turn, event.ContextWindowLearnedPayload{Turn: turn, Model: a.modelID, Window: window, Error: err.Error()})
 						turn--
 						continue
 					}

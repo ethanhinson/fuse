@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -303,7 +305,9 @@ func TestRunUnknownWindowPromptOnlyLimitFallsBackToPrompt(t *testing.T) {
 func TestRunUnknownWindowLearnsFromRejectionAndRecovers(t *testing.T) {
 	comp := &lengthRejectingCompleter{limitBytes: 70_000}
 	r := &lineRenderer{}
+	rec := &recordingStore{}
 	a := New(comp, &fakeExec{}, r, "m", "", 10, 100)
+	a.SetEventSink(rec)
 
 	big := strings.Repeat("x", 60_000)
 	history := []model.Message{
@@ -314,6 +318,20 @@ func TestRunUnknownWindowLearnsFromRejectionAndRecovers(t *testing.T) {
 	hist, err := a.Run(context.Background(), history)
 	if err != nil {
 		t.Fatalf("expected recovery, got %v", err)
+	}
+	e, ok := rec.first(event.KindContextWindowLearned)
+	if !ok {
+		t.Fatalf("no context.window.learned event; kinds = %v", rec.kinds())
+	}
+	var pl event.ContextWindowLearnedPayload
+	if err := json.Unmarshal(e.Payload, &pl); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if want := a.LearnedContextWindow(); pl.Window != want || pl.Window <= 0 {
+		t.Errorf("event window = %d, want the learned window %d", pl.Window, want)
+	}
+	if pl.Model != "m" || !strings.Contains(pl.Error, "maximum context length") {
+		t.Errorf("event payload = %+v, want model m and the provider error", pl)
 	}
 	if comp.calls != 2 {
 		t.Errorf("calls = %d, want 2 (reject, learn, prune, accepted)", comp.calls)
@@ -540,5 +558,35 @@ func TestRunConfiguredWindowIgnoresSeed(t *testing.T) {
 	}
 	if got := a.LearnedContextWindow(); got != 0 {
 		t.Errorf("LearnedContextWindow = %d, want 0 when a window is configured", got)
+	}
+}
+
+// With no configured window and a summarizer configured, a length rejection
+// learns a window, the summarizer compacts the old results against it, and the
+// retried request fits.
+func TestRunUnknownWindowLearnedRejectionSummarizes(t *testing.T) {
+	comp := &lengthRejectingCompleter{limitBytes: 16_000}
+	a := New(comp, &fakeExec{}, &lineRenderer{}, "m", "", 10, 100)
+	sc := &countingSummarizerCompleter{summary: "Objective: read files\nNext: continue"}
+	a.SetSummarizer(newSummarizer(sc, "m", 2000), nil)
+
+	hist, err := a.Run(context.Background(), overBudgetHistory())
+	if err != nil {
+		t.Fatalf("expected recovery, got %v", err)
+	}
+	if comp.calls != 2 {
+		t.Errorf("calls = %d, want 2 (reject, then the summarized request fits)", comp.calls)
+	}
+	if sc.calls != 1 {
+		t.Errorf("summarizer calls = %d, want 1", sc.calls)
+	}
+	found := false
+	for _, m := range hist {
+		if m.Role == "assistant" && strings.Contains(m.Content, "Objective: read files") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no injected summary message in the returned history")
 	}
 }

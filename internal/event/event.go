@@ -43,7 +43,11 @@ const (
 	// KindNoProgress fires when a run has gone too many tool calls without a file
 	// change and the loop nudges the model. It never ends the run.
 	KindNoProgress Kind = "no.progress"
-	KindError      Kind = "error"
+	// KindContextWindowLearned fires when no context_window is configured and the
+	// loop learned one from a provider length rejection. It is informational: it
+	// never rebuilds transcript state, so the resume fold ignores it.
+	KindContextWindowLearned Kind = "context.window.learned"
+	KindError                Kind = "error"
 	// KindUserInput records a user/human turn entering the model-facing transcript:
 	// the initial task at StartLoop and each human message injected at a turn
 	// boundary (ADR-0022 self-pull). It exists because user input is otherwise NOT
@@ -513,6 +517,15 @@ type UserInputPayload struct {
 	Source string `json:"source,omitempty"`
 	// Attachments names the images sent with the turn's text.
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
+}
+
+// ContextWindowLearnedPayload accompanies KindContextWindowLearned: the model the
+// window applies to, the learned size in tokens, and the provider's rejection.
+type ContextWindowLearnedPayload struct {
+	Turn   int    `json:"turn"`
+	Model  string `json:"model"`
+	Window int    `json:"window"`
+	Error  string `json:"error"`
 }
 
 // NoProgressPayload accompanies KindNoProgress: Calls tool calls across the agent

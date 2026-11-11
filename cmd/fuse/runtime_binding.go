@@ -327,7 +327,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		}
 		var a *agent.Agent
 		var aerr error
-		// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped. Its
+		// research-probe is headless (no TTY, AlwaysApprove), so a doom-loop trip
+		// aborts, and it has no turn cap unless max_turns is set. Its
 		// gates are policy provenance: AlwaysApprove is a policy approver.
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(childCfg, reg, modelID, r, opts.SystemPrompt+childReportGuidanceIf(childCfg), childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
