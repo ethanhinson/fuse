@@ -373,6 +373,18 @@ func isContextLengthErr(err error) bool {
 	return false
 }
 
+// learnContextWindow returns the window to manage context against after the
+// provider rejected a request of about rejected tokens for length, when the
+// window was not configured. current is 0 (unknown) or a window learned earlier
+// in this run. A learned window only ever goes down. ok is false when nothing
+// can be learned (no size to learn from, or no lower window).
+func learnContextWindow(current, rejected int) (window int, ok bool) {
+	if rejected <= 0 || (current > 0 && rejected >= current) {
+		return current, false
+	}
+	return rejected, true
+}
+
 // Run executes the agent loop over history (whose last message is the user
 // turn) and returns the extended history. The system prompt, if set, is
 // injected as the first message but only for the transport, not persisted into
@@ -408,8 +420,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	nudgedFP := map[string]bool{}
 
 	// window is the model's context size; 0 means unknown, in which case the
-	// loop sends requests as they are and does no proactive pruning.
+	// loop sends requests as they are and does no proactive pruning. With no
+	// configured window, a provider length rejection sets it to the size of the
+	// rejected request (learnContextWindow), and it only goes down from there.
 	window := a.ContextWindow
+	// learnedFrom is the provider error the current window was learned from; nil
+	// while the window is configured or still unknown.
+	var learnedFrom error
 	// outputCap starts at the configured max_tokens and rises when a reply is cut
 	// off. It stays raised for the run: the model that needed more room on this
 	// turn usually needs it on the next, and a cap is only a limit, not a spend.
@@ -419,7 +436,20 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// bytes/4 estimate of only the messages appended since.
 	lastUsage := 0
 	accounted := 0 // messages[:accounted] are covered by lastUsage
+	// prunedAccounted is the tokens cleared inside messages[:accounted] since
+	// lastUsage was last set. lastUsage still counts them until the next
+	// successful response reports fresh usage, which never comes after a
+	// rejection, so the estimate subtracts them.
+	prunedAccounted := 0
 	retriedContext := false
+	// prune stubs old tool results outside protect and books what it cleared
+	// inside the accounted prefix into prunedAccounted.
+	prune := func(protect int) int {
+		before := messagesSize(messages[:accounted])
+		freed := pruneOldToolResults(messages, protect, a.relevanceScorer, a.recencyFloorPct())
+		prunedAccounted += (before - messagesSize(messages[:accounted])) / bytesPerToken
+		return freed
+	}
 
 	// Tier 2 summarization state (change 0027), loop-scoped so concurrent agents
 	// never share it: previousSummary is the single living ODSNF document carried
@@ -469,7 +499,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		}
 
 		evictOldAttachments(messages, MaxLiveAttachments)
-		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
+		estimate := lastUsage - prunedAccounted + messagesSize(messages[accounted:])/bytesPerToken
 		budget := window * pruneThresholdPct / 100
 		abortAt := window * abortThresholdPct / 100
 		if window > 0 && estimate > budget {
@@ -540,10 +570,10 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				}
 				// The summary message was appended after `accounted`, so the estimate
 				// below re-includes it; the raw region is stubbed by the prune. Recompute.
-				estimate = lastUsage + messagesSize(messages[accounted:])/bytesPerToken
+				estimate = lastUsage - prunedAccounted + messagesSize(messages[accounted:])/bytesPerToken
 			}
 
-			freed := pruneOldToolResults(messages, protectBudget(window, false), a.relevanceScorer, a.recencyFloorPct())
+			freed := prune(protectBudget(window, false))
 			if freed > 0 {
 				a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk of old tool results", estimate/1000, window/1000, freed/1000)
 			}
@@ -551,7 +581,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// Still over: spend the recency protection before giving up, the same
 			// harder pass a provider length rejection gets.
 			if estimate > budget {
-				if hard := pruneOldToolResults(messages, protectBudget(window, true), a.relevanceScorer, a.recencyFloorPct()); hard > 0 {
+				if hard := prune(protectBudget(window, true)); hard > 0 {
 					a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk more, including recent tool results", estimate/1000, window/1000, hard/1000)
 					estimate -= hard
 				}
@@ -559,6 +589,12 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			if estimate > abortAt {
 				err := fmt.Errorf("%w: ~%dk tokens against a %dk window even after pruning — delegate to spawn_agent children or start a fresh session",
 					ErrContextTooLarge, estimate/1000, window/1000)
+				if learnedFrom != nil {
+					// Exact counts: a learned window can be tiny (a first-turn
+					// rejection). The provider error keeps the real limit visible.
+					err = fmt.Errorf("%w: ~%d tokens against a window of ~%d tokens learned from a provider rejection (%v), even after pruning - set context_window for this model to its real size, delegate to spawn_agent children, or start a fresh session",
+						ErrContextTooLarge, estimate, window, learnedFrom)
+				}
 				a.renderer.Errorf("%v", err)
 				a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 				return messages, err
@@ -617,15 +653,32 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			return messages, terr
 		}
 		if err != nil {
-			// The estimate said we fit but the provider disagreed: prune hard
-			// (deterministic — recovery must not depend on another LLM call)
-			// and retry exactly once.
-			if isContextLengthErr(err) && !retriedContext {
-				retriedContext = true
-				if freed := pruneOldToolResults(messages, protectBudget(window, true), a.relevanceScorer, a.recencyFloorPct()); freed > 0 {
-					a.renderer.Errorf("context: gateway rejected for length; cleared ~%dk tokens of old tool results, retrying", freed/1000)
-					turn--
-					continue
+			if isContextLengthErr(err) {
+				if a.ContextWindow <= 0 {
+					// No configured window: learn one from what the provider just
+					// refused, then go round the turn again so the normal
+					// prune/summarize/abort path runs against it. This ends: the
+					// next pass has estimate ~= window > budget, so it prunes and
+					// either sends at most abortAt (95% of the window) or aborts. A
+					// later rejection can therefore only learn a smaller window, and
+					// learnContextWindow refuses anything not strictly lower.
+					if learned, ok := learnContextWindow(window, estimate); ok {
+						window = learned
+						learnedFrom = err
+						a.renderer.Errorf("context: %s rejected a ~%d-token request for length; managing context against a learned window of ~%d tokens for the rest of this run (set context_window for this model to skip the rejected request)", a.modelID, estimate, window)
+						turn--
+						continue
+					}
+				} else if !retriedContext {
+					// The estimate said we fit but the provider disagreed: prune hard
+					// (deterministic - recovery must not depend on another LLM call)
+					// and retry exactly once.
+					retriedContext = true
+					if freed := prune(protectBudget(window, true)); freed > 0 {
+						a.renderer.Errorf("context: gateway rejected for length; cleared ~%dk tokens of old tool results, retrying", freed/1000)
+						turn--
+						continue
+					}
 				}
 			}
 			a.renderer.Errorf("model error: %v", err)
@@ -702,6 +755,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if resp.InputTokens > 0 {
 			lastUsage = resp.InputTokens
 			accounted = len(messages) // covered by lastUsage: exactly what this request sent
+			prunedAccounted = 0
 		}
 
 		if resp.Content != "" {
