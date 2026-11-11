@@ -17,9 +17,8 @@ func TestDefaultHasGatewayAndModels(t *testing.T) {
 	if c.Gateway.Key != "llm-gateway-local" {
 		t.Errorf("gateway key = %q", c.Gateway.Key)
 	}
-	// MaxTurns default is now UNSET (nil): the context-aware backstop
-	// (unlimited in the interactive shell, 100 headless) is applied at the
-	// call site in cmd/fuse, not baked into a config default. See change 0038.
+	// MaxTurns default is UNSET (nil), which is unlimited in every entry point,
+	// the same as an explicit 0.
 	if c.MaxTurns != nil {
 		t.Errorf("MaxTurns default = %v, want nil (unset — resolved contextually)", *c.MaxTurns)
 	}

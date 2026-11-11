@@ -35,7 +35,6 @@ func TestMaxTurnsStillErrors(t *testing.T) {
 		MaxConcurrent: 1,
 		BuildAgent: func(store event.EventStore, tr *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, error) {
 			a := agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 2, 0)
-			a.SetMaxTurnsExplicit(true)
 			return a, nil
 		},
 	})

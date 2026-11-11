@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -205,6 +206,37 @@ func TestRunLoopDetectionAbortsWhenNonInteractive(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "web_search") {
 		t.Errorf("abort error %q should name the repeated tool call", err.Error())
+	}
+}
+
+// An unset cap (0) is unlimited: a run well past the old 100-turn backstop
+// completes.
+func TestRunUnlimitedRunsPastOneHundredTurns(t *testing.T) {
+	var resps []model.CompletionResp
+	for i := 0; i < 150; i++ {
+		args := fmt.Sprintf(`{"command":"ls %d"}`, i)
+		resps = append(resps, model.CompletionResp{ToolCalls: []model.ToolCall{{ID: fmt.Sprint(i), Name: "bash", Arguments: args}}})
+	}
+	resps = append(resps, model.CompletionResp{Content: "done"})
+	exec := &fakeExec{}
+	a := New(&scriptedCompleter{responses: resps}, exec, nopRenderer{}, "m", "", 0, 100)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("unlimited run failed: %v", err)
+	}
+	if len(exec.calls) != 150 {
+		t.Errorf("tool calls = %d, want 150", len(exec.calls))
+	}
+}
+
+// With no turn cap and no loop-approval hook (headless / --approve-all), the
+// doom-loop detector is what stops a stuck run.
+func TestRunUnlimitedStillStopsOnDoomLoop(t *testing.T) {
+	same := model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "x", Name: "bash", Arguments: `{"command":"ls"}`}}}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{same, same, same, same, same}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 0, 100)
+	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+	if !errors.Is(err, ErrLoopDetected) {
+		t.Fatalf("expected ErrLoopDetected, got %v", err)
 	}
 }
 

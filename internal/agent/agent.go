@@ -128,9 +128,6 @@ type Agent struct {
 	// callGate, when set, is consulted before every model call; a non-nil error
 	// stops the call (token ceilings). See loop.go.
 	callGate func() error
-	// maxTurnsExplicit is true when the turn cap came from the spec/operator
-	// config rather than a binding's headless backstop (change 0090).
-	maxTurnsExplicit bool
 
 	// expectsSchema, when non-nil, is the JSON Schema the spawner declared for this
 	// child's structured result (change 0042). When set, Run offers a synthesized
@@ -252,8 +249,7 @@ func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
 // unlimited. An interactive (persistent conversational) loop MUST be uncapped: each
 // resumed exchange consumes real turns, so a finite cap would end the whole
 // conversation once total turns crossed it. The runtime lifts the cap here when it
-// enables interactive mode, independent of any per-turn backstop a one-shot binding
-// wants.
+// enables interactive mode.
 func (a *Agent) SetMaxTurns(n int) { a.maxTurns = n }
 
 // SetNoProgressCalls sets how many tool calls a run may make without a file change
@@ -488,10 +484,5 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 	}
 }
 
-// SetMaxTurnsExplicit records whether maxTurns was set by configuration (true) or is
-// a binding's default backstop (false). An interactive loop keeps an explicit cap as a
-// per-exchange limit and drops a backstop (change 0090).
-func (a *Agent) SetMaxTurnsExplicit(v bool) { a.maxTurnsExplicit = v }
-
-// MaxTurnsExplicit reports whether the turn cap was explicitly configured.
-func (a *Agent) MaxTurnsExplicit() bool { return a.maxTurnsExplicit }
+// MaxTurns reports the per-run turn cap; 0 means unlimited.
+func (a *Agent) MaxTurns() int { return a.maxTurns }

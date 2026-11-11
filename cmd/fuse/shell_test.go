@@ -61,6 +61,45 @@ func TestBuildAgentLoopApprovalWiring(t *testing.T) {
 	}
 }
 
+// TestBuildAgentTurnCapAtCompositionRoot asserts the turn cap at the builders
+// themselves: an unset max_turns is unlimited in every posture, an explicit one
+// caps every posture.
+func TestBuildAgentTurnCapAtCompositionRoot(t *testing.T) {
+	reg := model.DefaultRegistry()
+	r := tui.NewRenderer(discard{}, false)
+	seven := 7
+	for _, tc := range []struct {
+		name string
+		max  *int
+		want int
+	}{
+		{"unset", nil, 0},
+		{"explicit 7", &seven, 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.MaxTurns = tc.max
+			toolReg := defaultToolRegistry(nil, cfg.Research, nil)
+			for _, interactive := range []bool{false, true} {
+				a, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", "", nil, "root", toolReg, permissions.AlwaysApprove, nil, interactive, nil, nil, observe.NoopObserver{})
+				if err != nil {
+					t.Fatalf("buildAgentCore(interactive=%v): %v", interactive, err)
+				}
+				if got := a.MaxTurns(); got != tc.want {
+					t.Errorf("buildAgentCore(interactive=%v) MaxTurns = %d, want %d", interactive, got, tc.want)
+				}
+			}
+			child, err := buildChildAgent(cfg, reg, reg.Default, r, "sys", toolReg.Clone(), permissions.AlwaysApprove, nil, "child", nil, false, nil, nil)
+			if err != nil {
+				t.Fatalf("buildChildAgent: %v", err)
+			}
+			if got := child.MaxTurns(); got != tc.want {
+				t.Errorf("buildChildAgent MaxTurns = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
