@@ -365,3 +365,28 @@ func TestModelsEditorPreservesAttachments(t *testing.T) {
 		t.Errorf("attachments lost on edit: %+v", mc)
 	}
 }
+
+// TestModelFormContextWindowHint pins the focused context-window hint and that
+// the rendered line fits an 80-column view.
+func TestModelFormContextWindowHint(t *testing.T) {
+	f := &modelForm{field: fieldContextWindow, ctxWindow: "131072"}
+	var lines []string
+	renderModelForm(func(s string) { lines = append(lines, s) }, f)
+	found := false
+	for _, ln := range lines {
+		plain := stripANSIString(ln)
+		if !strings.Contains(plain, "context window") {
+			continue
+		}
+		found = true
+		if !strings.Contains(plain, "blank = unknown") || !strings.Contains(plain, "learned on overflow") {
+			t.Errorf("hint missing unknown/learned wording: %q", plain)
+		}
+		if w := lipgloss.Width(ln); w > 80 {
+			t.Errorf("context window line is %d cells wide: %q", w, plain)
+		}
+	}
+	if !found {
+		t.Fatal("context window row not rendered")
+	}
+}

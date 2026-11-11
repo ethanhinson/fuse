@@ -362,8 +362,7 @@ func toConfigModel(mc model.ModelConfig) config.ModelConfig {
 	return out
 }
 
-// parseNonNegative parses an optional integer field: empty means zero (the
-// "harness default" sentinel), and negatives/garbage are rejected with a
+// parseNonNegative parses an optional integer field: empty means zero (unset), and negatives/garbage are rejected with a
 // field-named error.
 func parseNonNegative(s, name string) (int, error) {
 	s = strings.TrimSpace(s)
@@ -460,7 +459,7 @@ func renderModelForm(add func(string), f *modelForm) {
 		{fieldID, "model id", f.id, "gateway route, e.g. cloud/glm-5.2"},
 		{fieldPersona, "persona", f.persona, "coding · research · general (optional)"},
 		{fieldMaxTokens, "max tokens", f.maxTokens, "per-turn output ceiling (blank = default)"},
-		{fieldContextWindow, "context window", f.ctxWindow, "context size (blank = 128k default)"},
+		{fieldContextWindow, "context window", f.ctxWindow, "context size (blank = unknown; learned on overflow)"},
 	}
 	for _, fl := range fields {
 		cursor := "  "

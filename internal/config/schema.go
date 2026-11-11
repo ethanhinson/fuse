@@ -38,7 +38,7 @@ type ModelConfig struct {
 	// max_tokens to, since reasoning spends the same budget as the reply. 0 = four
 	// times max_tokens; set it equal to max_tokens to make max_tokens a hard limit.
 	MaxTokensCeiling int    `yaml:"max_tokens_ceiling"`
-	ContextWindow    int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
+	ContextWindow    int    `yaml:"context_window"` // model context size in tokens; 0 = unknown (learned from a provider length rejection; set it when known)
 	Persona          string `yaml:"persona"`
 	SystemPrefix     string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
 	// ReasoningEffort is sent as reasoning_effort on this model's agent calls:

@@ -56,15 +56,19 @@ Replaces the 16KB per-result chop and the 360KB hard turn-failure.
   total-line reporting; ranged reads unchanged.
 - **Hybrid token tracking** in the agent loop: exact usage from the last
   response + bytes/4 of the delta appended since; per-model
-  `context_window` config (default 128k).
+  `context_window` config. An unset window is unknown: no proactive pruning,
+  and on the first provider length rejection the loop learns a window from
+  the rejected request's size, then prunes, summarizes and aborts against it
+  for the rest of the run.
 - **Recency pruning instead of turn failure**: at 85% of window, stub tool
   results older than the protected tail (newest ~40k estimated tokens of
   tool output; user/assistant messages never touched, so tool pairing stays
   valid) as `[old tool result cleared — re-run the tool if needed]`. Only
   if pruning still leaves the estimate over budget does the turn error
   (ErrContextTooLarge, now a last resort).
-- **Context-length error recovery**: pattern-match the gateway 400, prune
-  aggressively, retry the request once.
+- **Context-length error recovery**: pattern-match the gateway 400. With a
+  configured window the loop prunes aggressively and retries the request
+  once; with an unknown window it learns and lowers a window instead.
 
 ### Tier 2 — anchored compaction (implemented — change 0027)
 
