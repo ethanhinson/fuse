@@ -1,18 +1,12 @@
 # Backlog
 
-**155 changes** — 🟢 1 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**155 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 104 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0155](active/0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) | No limit applies unless someone sets one: unlimited headless turns and no assumed context window | `high` | `fix` | [#175](https://github.com/ethanhinson/fuse/pull/175) | awaiting merge |
 
 ## 🟣 Groomed (1)
 
@@ -68,17 +62,17 @@ graph TD
   0152
   0153
   0154
-  0155
   0012:::done
   0052:::done
   0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (135)</summary>
+<details><summary>✅🗑️ Archive — done + killed (136)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0155](archive/2026-11-11-0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) | No limit applies unless someone sets one: unlimited headless turns and no assumed context window | 2026-11-11 |
 | [0140](archive/2026-11-07-0140-object-storage-backend-for-the-artifact-store.md) | Object-storage backend for the artifact store | 2026-11-07 |
 | [0139](archive/2026-11-07-0139-segment-index-is-safe-with-concurrent-writers.md) | Segment index is safe with concurrent writers | 2026-11-07 |
 | [0137](archive/2026-11-07-0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | 2026-11-07 |
@@ -118,7 +112,6 @@ graph TD
 | [0112](archive/2026-11-01-0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | 2026-11-01 |
 | [0103](archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | 2026-11-01 |
 | [0102](archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | 2026-11-01 |
-| [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
 | [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
@@ -131,7 +124,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-11](archive/) | 2 done |
+| [2026-11](archive/) | 3 done |
 | [2026-10](archive/) | 14 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |

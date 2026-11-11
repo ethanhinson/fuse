@@ -2,7 +2,7 @@
 id: 155
 slug: 'no-limit-applies-unless-someone-sets-one-unlimited-headless'
 title: 'No limit applies unless someone sets one: unlimited headless turns and no assumed context window'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md](../../superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md) |
+| Spec (merged) | [2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md) |
 | Plan | [2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless.md](../../superpowers/plans/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) |
 | Results | [2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless-results.md](../../results/2026-11-10-no-limit-applies-unless-someone-sets-one-unlimited-headless-results.md) |
 | ADRs | [ADR-0083](../../adrs/0083-an-unconfigured-context-window-is-unknown-and-is-learned-fro.md) |

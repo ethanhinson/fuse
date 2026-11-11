@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0155 — No limit applies unless someone sets one: unlimited headless turns and no assumed context window](../../changes/active/0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md)**
+> ↩ **[Change 0155 — No limit applies unless someone sets one: unlimited headless turns and no assumed context window](../../changes/archive/2026-11-11-0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md)**
 <!-- docket:backlink:end -->
 
 # No limit applies unless someone sets one
