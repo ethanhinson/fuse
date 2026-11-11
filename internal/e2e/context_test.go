@@ -169,6 +169,61 @@ func TestContextOverflow_Persistent_Stops(t *testing.T) {
 	wantContains(t, r.stdout+r.stderr, "learned window", "output")
 }
 
+// No context_window is set and the gateway refuses any request over a byte limit.
+// The loop learns a window from the first rejection, prunes against it and
+// finishes the paging run; the rejections stay bounded and the last request fits.
+func TestContextOverflow_UnknownWindow_LearnsAndFinishes(t *testing.T) {
+	t.Parallel()
+	// Each read adds about 16KB, so the limit is crossed after 3-4 reads.
+	const limitBytes = 60000
+	var path string
+	main := 0
+	srv := newRouter(t, func(r *request) step {
+		if len(r.Tools) == 0 {
+			return text("SUMMARY-MARKER")
+		}
+		if len(r.Raw) > limitBytes {
+			return status(400, `{"error":{"message":"This model's maximum context length is 15000 tokens"}}`)
+		}
+		main++
+		n := main
+		usage := len(r.Raw) / 4
+		return func(w http.ResponseWriter, _ *http.Request) {
+			sseHeader(w)
+			if n > 12 {
+				sse(w, contentChunk("finished paging"))
+				sse(w, finishChunk("stop"))
+			} else {
+				sse(w, toolCallChunk(0, call{fmt.Sprintf("call_%d", n), "read_file",
+					mustArgs(map[string]any{"path": path, "start_line": n, "end_line": n + 200})}))
+				sse(w, finishChunk("tool_calls"))
+			}
+			sse(w, usageChunk(usage, 5))
+			done(w)
+		}
+	})
+	h := newHarness(t, srv)
+	path = bigFile(h)
+	r := h.run()
+	wantCode(t, r, 0)
+	wantContains(t, r.stdout, "finished paging", "stdout")
+	wantContains(t, r.stdout+r.stderr, "learned window", "output")
+	rejected := 0
+	for _, q := range srv.requests() {
+		if len(q.Tools) > 0 && len(q.Raw) > limitBytes {
+			rejected++
+		}
+	}
+	if rejected < 1 || rejected > 2 {
+		t.Fatalf("rejected requests = %d, want 1 or 2", rejected)
+	}
+	last := h.lastRequest()
+	wantContains(t, string(last.Raw), prunedMarker, "final request")
+	if len(last.Raw) > limitBytes {
+		t.Fatalf("final request is %d bytes, over the %d limit", len(last.Raw), limitBytes)
+	}
+}
+
 // A context genuinely too small to hold the conversation ends the run with a clear
 // error rather than spinning.
 func TestContextTooLarge_Aborts(t *testing.T) {
