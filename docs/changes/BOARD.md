@@ -1,18 +1,18 @@
 # Backlog
 
-**155 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**155 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0155](active/0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) | No limit applies unless someone sets one: unlimited headless turns and no assumed context window | `high` | `fix` | [spec](../superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md) | `fix/no-limit-applies-unless-someone-sets-one-unlimited-headless` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (1)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
-| [0155](active/0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) | No limit applies unless someone sets one: unlimited headless turns and no assumed context window | `high` | `fix` | [spec](../superpowers/specs/2026-11-11-no-limit-applies-unless-someone-sets-one-unlimited-headless-design.md) | build-ready |
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
 ## 🟡 Proposed (14)

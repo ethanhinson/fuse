@@ -2,7 +2,7 @@
 id: 155
 slug: 'no-limit-applies-unless-someone-sets-one-unlimited-headless'
 title: 'No limit applies unless someone sets one: unlimited headless turns and no assumed context window'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/no-limit-applies-unless-someone-sets-one-unlimited-headless'
 pr:
 blocked_by:
 reconciled: false
