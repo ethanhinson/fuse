@@ -1,6 +1,6 @@
 # Backlog
 
-**154 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
+**155 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 15 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 32 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
-## 🟡 Proposed (14)
+## 🟡 Proposed (15)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0155](active/0155-no-limit-applies-unless-someone-sets-one-unlimited-headless.md) | No limit applies unless someone sets one: unlimited headless turns and no assumed context window | `high` | `fix` | needs-grooming |
 | [0154](active/0154-remove-code-left-inert-by-the-server-removal.md) | Remove code left inert by the server removal | `low` | `chore` | needs-grooming |
 | [0153](active/0153-user-hooks-around-tool-calls.md) | User hooks around tool calls | `low` | `feat` | needs-grooming |
 | [0152](active/0152-os-sandbox-for-local-bash.md) | OS sandbox for local bash | `low` | `feat` | needs-grooming |
@@ -62,6 +63,7 @@ graph TD
   0152
   0153
   0154
+  0155
   0012:::done
   0052:::done
   0063:::done
