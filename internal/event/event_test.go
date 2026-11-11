@@ -13,21 +13,22 @@ import (
 // every consumer, so the values are asserted literally.
 func TestKindWireValues(t *testing.T) {
 	cases := map[Kind]string{
-		KindTurnStart:          "turn.start",
-		KindTurnEnd:            "turn.end",
-		KindModelCallStart:     "model.call.start",
-		KindModelDelta:         "model.delta",
-		KindModelCallEnd:       "model.call.end",
-		KindToolCall:           "tool.call",
-		KindToolResult:         "tool.result",
-		KindSpawnStart:         "spawn.start",
-		KindSpawnDone:          "spawn.done",
-		KindSummarize:          "context.summarize",
-		KindLoopTrip:           "loop.detector.trip",
-		KindNoProgress:         "no.progress",
-		KindError:              "error",
-		KindUserInput:          "user.input",
-		KindPermissionDecision: "permission.decision",
+		KindTurnStart:            "turn.start",
+		KindTurnEnd:              "turn.end",
+		KindModelCallStart:       "model.call.start",
+		KindModelDelta:           "model.delta",
+		KindModelCallEnd:         "model.call.end",
+		KindToolCall:             "tool.call",
+		KindToolResult:           "tool.result",
+		KindSpawnStart:           "spawn.start",
+		KindSpawnDone:            "spawn.done",
+		KindSummarize:            "context.summarize",
+		KindLoopTrip:             "loop.detector.trip",
+		KindNoProgress:           "no.progress",
+		KindContextWindowLearned: "context.window.learned",
+		KindError:                "error",
+		KindUserInput:            "user.input",
+		KindPermissionDecision:   "permission.decision",
 	}
 	for k, want := range cases {
 		if string(k) != want {

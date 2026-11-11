@@ -362,8 +362,8 @@ func toConfigModel(mc model.ModelConfig) config.ModelConfig {
 	return out
 }
 
-// parseNonNegative parses an optional integer field: empty means zero (unset), and negatives/garbage are rejected with a
-// field-named error.
+// parseNonNegative parses an optional integer field: empty means zero (unset),
+// and negatives/garbage are rejected with a field-named error.
 func parseNonNegative(s, name string) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
