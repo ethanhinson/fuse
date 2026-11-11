@@ -90,6 +90,38 @@ func TestMaxTurns_Nonzero(t *testing.T) {
 	wantContains(t, r.stderr, "max turns", "stderr")
 }
 
+// With no max_turns set there is no turn cap: the run goes past the old
+// 100-turn headless backstop and ends when the model answers.
+func TestHeadless_NoMaxTurns_RunsPastOneHundredTurns(t *testing.T) {
+	t.Parallel()
+	srv := newRouter(t, func(r *request) step {
+		if r.N < 105 {
+			return tool("list_directory", fmt.Sprintf(`{"path":".","n":%d}`, r.N))
+		}
+		return text("all done")
+	})
+	h := newHarness(t, srv)
+	r := h.run()
+	wantCode(t, r, 0)
+	if srv.count() != 106 {
+		t.Fatalf("requests = %d, want 106", srv.count())
+	}
+	wantContains(t, r.stdout, "all done", "stdout")
+}
+
+// --approve-all must still end a doom loop of identical calls.
+func TestHeadless_ApproveAll_IdenticalCallsStopOnLoopDetector(t *testing.T) {
+	t.Parallel()
+	srv := newRouter(t, func(*request) step { return tool("list_directory", map[string]string{"path": "."}) })
+	h := newHarness(t, srv)
+	r := h.run("--approve-all")
+	wantCode(t, r, 1)
+	if srv.count() > 5 {
+		t.Fatalf("requests = %d, want at most 5", srv.count())
+	}
+	wantContains(t, r.stderr, "loop detected", "stderr")
+}
+
 func TestApproveAllAbsent_StdinClosed_RefusesMutatingTools(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(h *harness) step{

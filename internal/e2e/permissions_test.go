@@ -178,19 +178,21 @@ func TestDeniedCallLoop_Identical_StopsNonzero(t *testing.T) {
 	mustNotExist(t, target)
 }
 
-// Different arguments each turn dodge the identical-call detector. The turn cap
-// still has to end it.
-func TestDeniedCallLoop_Varying_BoundedByTurnCap(t *testing.T) {
+// Different arguments each turn dodge the identical-call detector, and there is
+// no default turn cap, so a caller who wants a ceiling sets max_turns.
+func TestDeniedCallLoop_Varying_BoundedByExplicitTurnCap(t *testing.T) {
 	t.Parallel()
 	srv := newRouter(t, func(r *request) step {
 		return tool("write_file", map[string]string{"path": fmt.Sprintf("f%d.txt", r.N), "content": "x"})
 	})
 	h := newHarness(t, srv)
+	h.extra = "max_turns: 20\n"
 	r := h.run()
 	wantCode(t, r, 1)
-	if srv.count() > 100 {
-		t.Fatalf("requests = %d, want at most the headless backstop of 100", srv.count())
+	if srv.count() != 20 {
+		t.Fatalf("requests = %d, want 20", srv.count())
 	}
+	wantContains(t, r.stderr, "max turns", "stderr")
 }
 
 func TestSuccessfulCallLoop_Identical_StopsNonzero(t *testing.T) {
