@@ -137,14 +137,15 @@ func personaCell(mc model.ModelConfig) string {
 }
 
 // limitsCell renders the max-tokens / context-window column. A zero max-tokens
-// means "harness default"; a zero context window means the 128k harness
-// default, so both are shown as "default" rather than "0".
+// means "harness default" and is shown as "default" rather than "0". A zero
+// context window is unknown: fuse learns one from the provider if a request is
+// rejected for length, and setting it is recommended.
 func limitsCell(mc model.ModelConfig) string {
 	maxTok := "default"
 	if mc.MaxTokens > 0 {
 		maxTok = fmt.Sprintf("%d out", mc.MaxTokens)
 	}
-	ctx := "128k ctx"
+	ctx := "ctx unknown"
 	if mc.ContextWindow > 0 {
 		ctx = fmt.Sprintf("%s ctx", humanTokens(mc.ContextWindow))
 	}

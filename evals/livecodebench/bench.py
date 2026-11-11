@@ -800,7 +800,7 @@ def main():
     ap.add_argument("--fuse-max-tokens", type=int, default=128000,
                     help="fuse arms: per-call max_tokens (overrides the alias's config value for the run)")
     ap.add_argument("--fuse-context-window", type=int, default=0,
-                    help="fuse arms: models.<alias>.context_window for this run (0 = harness default 128k); "
+                    help="fuse arms: models.<alias>.context_window for this run (0 = unset: fuse learns the window from the provider on overflow); "
                          "for a local server set it to the loaded context length minus --fuse-max-tokens")
     ap.add_argument("--max-spawns", type=int, default=6, help="fuse-team: spawn budget")
     ap.add_argument("--fuse-bin", default=(os.path.join(HERE, "..", "..", "fuse")

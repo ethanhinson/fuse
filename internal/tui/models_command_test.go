@@ -270,7 +270,7 @@ func TestModelsListingBlankPersonaHoldsColumn(t *testing.T) {
 }
 
 func TestLimitsCell(t *testing.T) {
-	if got := limitsCell(model.ModelConfig{MaxTokens: 0, ContextWindow: 0}); got != "default · 128k ctx" {
+	if got := limitsCell(model.ModelConfig{MaxTokens: 0, ContextWindow: 0}); got != "default · ctx unknown" {
 		t.Errorf("zero limits = %q", got)
 	}
 	if got := limitsCell(model.ModelConfig{MaxTokens: 16384, ContextWindow: 131072}); got != "16384 out · 128k ctx" {

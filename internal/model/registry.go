@@ -15,7 +15,7 @@ type ModelConfig struct {
 	// MaxTokens to. 0 = four times MaxTokens; set it equal to MaxTokens to make
 	// MaxTokens a hard limit.
 	MaxTokensCeiling int
-	ContextWindow    int // model context size in tokens; 0 = harness default (128k)
+	ContextWindow    int // model context size in tokens; 0 = unknown (learned from a provider length rejection; set it when known)
 	Persona          string
 	SystemPrefix     string // prepended before the persona system prompt; for model-specific directives
 	// ReasoningEffort is sent as reasoning_effort on agent calls; empty sends nothing.
