@@ -72,6 +72,13 @@ type Agent struct {
 	// if the provider rejects a request for length (see Run).
 	ContextWindow int
 
+	// learnedWindow is a context size learned from a provider length rejection
+	// while ContextWindow is unset. Run starts from it and updates it, so a
+	// caller that builds a fresh agent per exchange can carry it across them
+	// (SetLearnedContextWindow / LearnedContextWindow). A configured
+	// ContextWindow always wins. It is per agent: children do not share it.
+	learnedWindow int
+
 	// LoopApproval, when set, makes the doom-loop detector interactive: on a
 	// trip (loopLimit consecutive byte-identical tool-call sets) the loop calls
 	// it with a "possible loop" preview instead of aborting. Returning
@@ -486,3 +493,16 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 
 // MaxTurns reports the per-run turn cap; 0 means unlimited.
 func (a *Agent) MaxTurns() int { return a.maxTurns }
+
+// SetLearnedContextWindow seeds the window Run manages context against when
+// ContextWindow is unset. 0 clears it.
+func (a *Agent) SetLearnedContextWindow(tokens int) { a.learnedWindow = max(tokens, 0) }
+
+// LearnedContextWindow returns the window learned from a provider length
+// rejection (or seeded), 0 when none or when ContextWindow is configured.
+func (a *Agent) LearnedContextWindow() int {
+	if a.ContextWindow > 0 {
+		return 0
+	}
+	return a.learnedWindow
+}

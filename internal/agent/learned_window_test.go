@@ -470,3 +470,75 @@ func TestRunConfiguredWindowRejectionStillRetriesOnce(t *testing.T) {
 		}
 	}
 }
+
+func bigToolHistory() []model.Message {
+	big := strings.Repeat("x", 40_000)
+	return []model.Message{
+		{Role: "user", Content: "task"},
+		{Role: "tool", ToolCallID: "1", Name: "read_file", Content: big},
+		{Role: "tool", ToolCallID: "2", Name: "read_file", Content: big},
+		{Role: "tool", ToolCallID: "3", Name: "read_file", Content: big},
+	}
+}
+
+// A window learned on an earlier Run and handed to a new agent is managed
+// against from the first request: the history is pruned and no request is
+// rejected.
+func TestRunSeededLearnedWindowPrunesWithoutRejection(t *testing.T) {
+	comp := &totalLimitCompleter{limit: 35_000}
+	r := &lineRenderer{}
+	a := New(comp, &fakeExec{}, r, "m", "", 10, 8000)
+	a.SetLearnedContextWindow(35_000)
+
+	if _, err := a.Run(context.Background(), bigToolHistory()); err != nil {
+		t.Fatalf("Run: %v; lines: %q", err, r.lines)
+	}
+	if comp.rejections != 0 {
+		t.Errorf("rejections = %d, want 0 with a seeded window; lines: %q", comp.rejections, r.lines)
+	}
+	if got := r.learnedWindows(t); len(got) != 0 {
+		t.Errorf("learned windows = %v, want none", got)
+	}
+}
+
+// Without a seed the same history costs a rejection, and the agent exposes the
+// window it learned so the caller can carry it to the next exchange.
+func TestRunExposesLearnedWindow(t *testing.T) {
+	comp := &totalLimitCompleter{limit: 35_000}
+	r := &lineRenderer{}
+	a := New(comp, &fakeExec{}, r, "m", "", 10, 8000)
+	if got := a.LearnedContextWindow(); got != 0 {
+		t.Fatalf("fresh LearnedContextWindow = %d, want 0", got)
+	}
+	if _, err := a.Run(context.Background(), bigToolHistory()); err != nil {
+		t.Fatalf("Run: %v; lines: %q", err, r.lines)
+	}
+	if comp.rejections < 1 {
+		t.Fatalf("rejections = %d, want at least 1", comp.rejections)
+	}
+	if got := a.LearnedContextWindow(); got <= 0 {
+		t.Errorf("LearnedContextWindow = %d, want the learned size", got)
+	}
+}
+
+// A configured ContextWindow always wins over a seeded one.
+func TestRunConfiguredWindowIgnoresSeed(t *testing.T) {
+	comp := &totalLimitCompleter{limit: 1_000_000}
+	r := &lineRenderer{}
+	a := New(comp, &fakeExec{}, r, "m", "", 10, 8000)
+	a.ContextWindow = 1_000_000
+	a.SetLearnedContextWindow(35_000)
+
+	hist, err := a.Run(context.Background(), bigToolHistory())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for i, m := range hist {
+		if m.Content == prunedStub {
+			t.Errorf("message %d pruned against the seed instead of the configured window", i)
+		}
+	}
+	if got := a.LearnedContextWindow(); got != 0 {
+		t.Errorf("LearnedContextWindow = %d, want 0 when a window is configured", got)
+	}
+}
