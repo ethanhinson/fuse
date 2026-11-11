@@ -143,6 +143,12 @@ func TestContextOverflow_AfterToolHistory_BoundedNoInfiniteLoop(t *testing.T) {
 	}
 }
 
+// No context_window is set, so the first rejection teaches the loop a window.
+// The read and the rejected request are sent; the only tool result is the
+// newest, which pruning always keeps, so the run aborts against the learned
+// window without another request. Even with something prunable, a second
+// rejection can only learn a smaller window, so the count stays bounded; a
+// higher count means the learned window is not shrinking and the loop could spin.
 func TestContextOverflow_Persistent_Stops(t *testing.T) {
 	t.Parallel()
 	overflow := status(400, `{"error":{"message":"maximum context length exceeded"}}`)
@@ -160,6 +166,7 @@ func TestContextOverflow_Persistent_Stops(t *testing.T) {
 	if srv.count() > 4 {
 		t.Fatalf("requests = %d, want prune-and-retry at most once", srv.count())
 	}
+	wantContains(t, r.stdout+r.stderr, "learned window", "output")
 }
 
 // A context genuinely too small to hold the conversation ends the run with a clear
