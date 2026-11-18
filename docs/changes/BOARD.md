@@ -1,18 +1,18 @@
 # Backlog
 
-**156 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 104 done · 🗑️ 32 killed
+**156 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 14 proposed · ⚪ 3 deferred · ✅ 104 done · 🗑️ 32 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0156](active/0156-a-one-shot-run-can-continue-a-saved-session-session-dir.md) | A one-shot run can continue a saved session (--session DIR) | `high` | `feat` | [spec](../superpowers/specs/2026-11-18-a-one-shot-run-can-continue-a-saved-session-session-dir-design.md) | `feat/a-one-shot-run-can-continue-a-saved-session-session-dir` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (1)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
-| [0156](active/0156-a-one-shot-run-can-continue-a-saved-session-session-dir.md) | A one-shot run can continue a saved session (--session DIR) | `high` | `feat` | [spec](../superpowers/specs/2026-11-18-a-one-shot-run-can-continue-a-saved-session-session-dir-design.md) | build-ready |
 | [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 
 ## 🟡 Proposed (14)
