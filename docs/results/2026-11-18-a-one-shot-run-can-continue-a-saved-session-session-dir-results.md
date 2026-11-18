@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0156 — A one-shot run can continue a saved session (--session DIR)](../changes/active/0156-a-one-shot-run-can-continue-a-saved-session-session-dir.md)**
+> ↩ **[Change 0156 — A one-shot run can continue a saved session (--session DIR)](../changes/archive/2026-11-18-0156-a-one-shot-run-can-continue-a-saved-session-session-dir.md)**
 <!-- docket:backlink:end -->
 
 # Results: a one-shot run can continue a saved session

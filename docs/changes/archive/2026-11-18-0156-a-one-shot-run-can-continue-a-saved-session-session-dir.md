@@ -2,7 +2,7 @@
 id: 156
 slug: 'a-one-shot-run-can-continue-a-saved-session-session-dir'
 title: 'A one-shot run can continue a saved session (--session DIR)'
-status: 'in-progress'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'results-artifact'
