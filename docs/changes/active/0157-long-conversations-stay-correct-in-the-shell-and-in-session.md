@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md'
 plan:
-results:
+results: 'docs/results/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -31,6 +31,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md](../../superpowers/specs/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md) |
+| Results | [2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-results.md](../../results/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
