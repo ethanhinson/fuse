@@ -5,7 +5,7 @@ title: 'Long conversations stay correct in the shell and in --session runs'
 status: 'proposed'
 priority: 'high'
 type: 'fix'
-deliverable: 'pr'
+deliverable: 'results-artifact'
 created: '2026-11-18'
 updated: '2026-11-18'
 depends_on: []
@@ -13,7 +13,7 @@ stacked_on:
 related: [156]
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md](../../superpowers/specs/2026-11-18-long-conversations-stay-correct-in-the-shell-and-in-session-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
