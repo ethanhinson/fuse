@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0157 — Long conversations stay correct in the shell and in --session runs](../../changes/active/0157-long-conversations-stay-correct-in-the-shell-and-in-session.md)**
+> ↩ **[Change 0157 — Long conversations stay correct in the shell and in --session runs](../../changes/archive/2026-11-18-0157-long-conversations-stay-correct-in-the-shell-and-in-session.md)**
 <!-- docket:backlink:end -->
 
 # Long conversations stay correct

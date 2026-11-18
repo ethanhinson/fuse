@@ -2,7 +2,7 @@
 id: 157
 slug: 'long-conversations-stay-correct-in-the-shell-and-in-session'
 title: 'Long conversations stay correct in the shell and in --session runs'
-status: 'in-progress'
+status: 'done'
 priority: 'high'
 type: 'fix'
 deliverable: 'results-artifact'
